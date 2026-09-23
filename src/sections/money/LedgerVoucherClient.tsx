@@ -12,7 +12,7 @@ export function LedgerVoucherClient({ vouchers }: { vouchers: V[] }) {
   useEffect(() => {
     // attach click handlers to the ref links rendered server-side
     const links = document.querySelectorAll<HTMLAnchorElement>("[data-voucher]");
-    const handlers: Array<[Element, () => void]> = [];
+    const handlers: Array<[Element, (e: Event) => void]> = [];
     links.forEach(el => {
       const id = el.dataset.voucher!;
       const v = vouchers.find(x => x.id === id);
@@ -33,7 +33,7 @@ export function LedgerVoucherClient({ vouchers }: { vouchers: V[] }) {
       onClose={() => setEdit(null)}
       onSaved={() => { setEdit(null); location.reload(); }} />;
   }
-  return <MoneyVoucherModal voucherId={edit.id} kind={edit.kind}
+  return <MoneyVoucherModal voucherId={edit.id} kind={edit.kind as "receipt" | "payment" | "journal"}
     onClose={() => setEdit(null)}
     onSaved={() => { setEdit(null); location.reload(); }} />;
 }

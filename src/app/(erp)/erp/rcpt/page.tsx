@@ -8,7 +8,7 @@ export default async function RcptPage({ searchParams }:
   { searchParams: Promise<{ page?: string }> }) {
   await requireStaff();
   const { page } = await searchParams;
-  const pg = Math.max(1, +page || 1);
+    const pg = Math.max(1, +(page ?? 1) || 1);
   const sb = await createClient();
   const [{ data: hist }, { data: parties }] = await Promise.all([
     sb.from("vouchers").select("*").eq("type", "receipt")

@@ -13,7 +13,7 @@ export function MoneyVoucherModal({ voucherId, kind, onClose, onSaved }: {
   const [narr, setNarr] = useState("");
   const [err, setErr] = useState("");
   const [saving, start] = useTransition();
-
+    const handlers: Array<[Element, (e: Event) => void]> = [];
   useEffect(() => {
     const sb = createClient();
     sb.from("vouchers").select("*").eq("id", voucherId).single().then(({ data }) => {

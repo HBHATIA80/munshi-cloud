@@ -291,7 +291,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
             }
             invRows.push({ id: v.id, no: v.no, date: v.date, party: nameOf(v.party_id), ret: isRet,
               rev: Math.round(netT * sign * 100) / 100,
-              cogs: Math.round(vCost * sign * 100) / 100 });
+              cogs: Math.round(vCost * sign * 100) / 100, p: 0 });
           }
           if (v.type === "purchase")
             bump(mSup, v.party_id ?? "?", nameOf(v.party_id), +v.taxable, 0, 0, 1);

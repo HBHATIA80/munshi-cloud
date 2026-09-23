@@ -17,7 +17,7 @@ export default async function SalesRegPage({ searchParams }:
   { searchParams: Promise<{ page?: string; range?: string; from?: string; to?: string }> }) {
   await requireStaff();
   const sp = await searchParams;
-  const pg = Math.max(1, +sp.page || 1);
+   const pg = Math.max(1, +(sp.page ?? 1) || 1);
   const preset = sp.range || "30";
   const { from, to } = preset === "custom" && sp.from
     ? { from: sp.from, to: sp.to || new Date().toISOString().slice(0, 10) }

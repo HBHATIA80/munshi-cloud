@@ -123,7 +123,7 @@ export async function savePurchaseAction(fd: FormData): Promise<Res> {
     const isGst = String(fd.get("is_gst") || "1") === "1";
     const paid = Math.max(0, +String(fd.get("paid") || 0) || 0);
     const payMode = String(fd.get("pay_mode") || "cash");
-
+    const partyId = String(fd.get("party_id") || "") || null;
     let taxable = 0, tax = 0;
     for (const l of valid) {
       l._net = Math.round(l.qty * l.rate * 100) / 100;

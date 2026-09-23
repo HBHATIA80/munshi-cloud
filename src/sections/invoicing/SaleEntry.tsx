@@ -1,10 +1,10 @@
-"use client";
+﻿"use client";
 import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { saveSaleAction } from "./actions";
 import { LiveSearch } from "@/components/LiveSearch";
 
-type Item = { id: string; name: string; sku: string; unit: string; gst: number;
+type Item = { hsn: string; id: string; name: string; sku: string; unit: string; gst: number;
   cost: number; pr: number; ps: number; stock: number };
 type Party = { id: string; name: string; type: string; state: string | null };
 type Line = { item_id: string; name: string; unit: string; hsn: string;

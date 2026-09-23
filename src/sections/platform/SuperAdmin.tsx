@@ -153,7 +153,7 @@ export function SuperAdmin({ tenants, upgrades, resets, meId }: {
                     <button className="btn sm grn" disabled={pending}
                       onClick={() => doReset(r.id, true, r.email)}>Reset &amp; get temp</button>
                     <button className="btn sm dng" disabled={pending}
-                      onClick={() => doReset(r.id, false)}>Reject</button>
+                                       onClick={() => doReset(r.id, false, "")}>Reject</button>
                   </>}
                 </td>
               </tr>))}
