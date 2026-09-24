@@ -1,6 +1,7 @@
 "use client";
 import { useMemo, useState, useTransition } from "react";
 import { partyJournalAction } from "@/sections/invoicing/actions";
+import { updateMoneyVoucherAction } from "@/sections/invoicing/actions";
 import { LiveSearch } from "@/components/LiveSearch";
 import { showAlert } from "@/components/Alert";
 import { CsvBtn } from "@/lib/CsvBtn";
@@ -10,78 +11,113 @@ type H = { no: string; date: string; party_id: string | null; total: number; nar
 
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 
-/* ---------- one transfer = the A/B leg pair of a journal (same base number) ---------- */
+/* one transfer = the A/B leg pair of a journal (same base number) */
 type Tx = {
-  base: string; date: string; amount: number;
-  fromId: string | null; toId: string | null;
-  narr: string; complete: boolean;
+  base: string; legAId: string; legBId: string;
+  date: string; amount: number;
+  fromId: string | null; toId: string | null; narr: string; complete: boolean;
 };
 
 function groupTxs(history: H[]): Tx[] {
-  const byBase = new Map<string, { a?: H; b?: H }>();
-  for (const h of history) {
-    const base = h.no.replace(/-[AB]$/, "");
-    const slot = byBase.get(base) ?? {};
-    if (h.no.endsWith("-A")) slot.a = h;
-    else if (h.no.endsWith("-B")) slot.b = h;
-    byBase.set(base, slot);
-  }
-  const txs: Tx[] = [];
-  for (const [base, s] of byBase) {
-    txs.push({
-      base,
-      date: s.a?.date ?? s.b?.date ?? "",
-      amount: +(s.a?.total ?? s.b?.total ?? 0),
-      fromId: s.a?.party_id ?? null,
-      toId: s.b?.party_id ?? null,
-      narr: s.a?.narr ?? s.b?.narr ?? "",
-      complete: !!(s.a && s.b),
-    });
-  }
-  txs.sort((x, y) => (y.date + y.base).localeCompare(x.date + x.base)); // newest first
-  return txs;
+  const byBase = new Map<string, { a?: H & { id?: string }; b?: H & { id?: string } }>();
+  // NOTE: ids needed for edit — the page query must include `id` (see Patch 3)
+  return [];
 }
+void groupTxs;
 
 export function PartyJournal({ parties, history }: { parties: P[]; history: H[] }) {
   const [pending, start] = useTransition();
   const [fromId, setFromId] = useState("");
   const [toId, setToId] = useState("");
   const [amount, setAmount] = useState("");
+  const [jDate, setJDate] = useState(new Date().toISOString().slice(0, 10));
+  const [note, setNote] = useState("");
   const nameOf = (id: string | null) => parties.find(p => p.id === id)?.name ?? "—";
 
-  /* history: filters + pagination state */
+  /* history: filters + pagination */
   const [fFrom, setFFrom] = useState("");
   const [fTo, setFTo] = useState("");
   const [q, setQ] = useState("");
   const [size, setSize] = useState(10);
   const [page, setPage] = useState(1);
 
-  const txs = useMemo(() => groupTxs(history), [history]);
+  const txs = useMemo<Tx[]>(() => {
+    const byBase = new Map<string, { a?: H; b?: H }>();
+    for (const h of history) {
+      const base = h.no.replace(/-[AB]$/, "");
+      const slot = byBase.get(base) ?? {};
+      if (h.no.endsWith("-A")) slot.a = h;
+      else if (h.no.endsWith("-B")) slot.b = h;
+      byBase.set(base, slot);
+    }
+    const out: Tx[] = [];
+    for (const [base, s] of byBase) {
+      out.push({
+        base, legAId: "", legBId: "",
+        date: s.a?.date ?? s.b?.date ?? "",
+        amount: +(s.a?.total ?? s.b?.total ?? 0),
+        fromId: s.a?.party_id ?? null, toId: s.b?.party_id ?? null,
+        narr: s.a?.narr ?? s.b?.narr ?? "",
+        complete: !!(s.a && s.b),
+      });
+    }
+    out.sort((x, y) => (y.date + y.base).localeCompare(x.date + x.base));
+    return out;
+  }, [history]);
 
   const filtered = useMemo(() => {
-    const nm = (id: string | null) => parties.find(p => p.id === id)?.name ?? "—";
     const needle = q.trim().toLowerCase();
     return txs.filter(t => {
       if (fFrom && t.date && t.date < fFrom) return false;
       if (fTo && t.date && t.date > fTo) return false;
       if (needle) {
-        const hay = (t.base + " " + nm(t.fromId) + " " + nm(t.toId) + " " + (t.narr ?? "")).toLowerCase();
+        const hay = (t.base + " " + nameOf(t.fromId) + " " + nameOf(t.toId)
+          + " " + (t.narr ?? "")).toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       return true;
     });
-  }, [txs, fFrom, fTo, q, parties]);
+  }, [txs, fFrom, fTo, q, parties]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pages = Math.max(1, Math.ceil(filtered.length / size));
   const cur = Math.min(page, pages);
   const rows = filtered.slice((cur - 1) * size, cur * size);
   const hasFilter = !!(fFrom || fTo || q);
 
+  /* edit modal state */
+  const [editTx, setEditTx] = useState<Tx | null>(null);
+  const [eAmount, setEAmount] = useState("");
+  const [eDate, setEDate] = useState("");
+  const [eNote, setENote] = useState("");
+
+  const openEdit = (t: Tx) => {
+    setEditTx(t); setEAmount(String(t.amount)); setEDate(t.date); setENote(t.narr);
+  };
+
+  const saveEdit = () => start(async () => {
+    if (!editTx) return;
+    const legId = editTx.fromId ? (history.find(h => h.no === editTx.base + "-A") as any)?.id
+      : (history.find(h => h.no === editTx.base + "-B") as any)?.id;
+    if (!legId) { showAlert("Edit failed", "Leg id missing — refresh the page.", "❌"); return; }
+    const fd = new FormData();
+    fd.set("id", legId);
+    fd.set("amount", eAmount);
+    fd.set("date", eDate);
+    fd.set("narr", eNote);
+    fd.set("kind", "journal");
+    fd.set("mode", "journal");
+    const r = await updateMoneyVoucherAction(fd);
+    if (r.error) showAlert("Edit failed", r.error, "❌");
+    else location.reload();
+  });
+
   const post = () => {
     const fd = new FormData();
     fd.set("from_party", fromId);
     fd.set("to_party", toId);
     fd.set("amount", amount);
+    fd.set("date", jDate);
+    fd.set("narr", note);
     start(async () => {
       const r = await partyJournalAction(fd);
       if (r.error) showAlert("Transfer failed", r.error, "❌");
@@ -94,7 +130,7 @@ export function PartyJournal({ parties, history }: { parties: P[]; history: H[] 
       <div className="panel">
         <div className="ph"><h3>Party ↔ Party transfer</h3></div>
         <div className="pb">
-          <div className="frm" style={{ gridTemplateColumns: "1fr auto 1fr 1fr", gap: 10 }}>
+          <div className="frm" style={{ gridTemplateColumns: "1fr auto 1fr 1fr 1fr", gap: 10 }}>
             <div>
               <label className="fl">From party *</label>
               <LiveSearch items={parties} getLabel={p => p.name} getSub={p => p.type}
@@ -112,16 +148,25 @@ export function PartyJournal({ parties, history }: { parties: P[]; history: H[] 
               <label className="fl">Amount *</label>
               <input className="inp mono" type="number" min="0" step="0.01"
                 value={amount} onChange={e => setAmount(e.target.value)} />
+            </div>
+            <div>
+              <label className="fl">Date</label>
+              <input className="inp mono" type="date" value={jDate}
+                onChange={e => setJDate(e.target.value)} />
               <button className="btn pri" style={{ marginTop: 8, width: "100%", justifyContent: "center" }}
                 disabled={pending || !fromId || !toId || !(+amount > 0) || fromId === toId}
                 onClick={post}>
                 {pending ? "Posting…" : "Post transfer"}</button>
             </div>
+            <div className="full">
+              <label className="fl">Note (optional — saved on both legs)</label>
+              <input className="inp" value={note} onChange={e => setNote(e.target.value)}
+                placeholder="e.g. Balance shifted on supplier request" />
+            </div>
           </div>
           <p className="mut" style={{ fontSize: 12, marginTop: 10 }}>
             From party is <b>Debited</b> (balance decreases), To party is <b>Credited</b>
-            (balance increases). E.g. to move what you owe from supplier A to supplier B,
-            pick A as From and B as To. Both legs delete and edit together.</p>
+            (balance increases). Both legs edit and delete together.</p>
         </div>
       </div>
 
@@ -133,7 +178,6 @@ export function PartyJournal({ parties, history }: { parties: P[]; history: H[] 
           </span>
         </div>
 
-        {/* filter bar */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", padding: "10px 12px 0" }}>
           <input className="inp mono" type="date" value={fFrom} style={{ width: 140 }}
             onChange={e => { setFFrom(e.target.value); setPage(1); }} />
@@ -161,11 +205,11 @@ export function PartyJournal({ parties, history }: { parties: P[]; history: H[] 
         <div className="tblw" style={{ marginTop: 8 }}>
           <table className="t">
             <thead><tr>
-              <th>No</th><th>Date</th><th>Transfer detail</th><th className="num">Amount</th>
+              <th>No</th><th>Date</th><th>Transfer detail</th><th className="num">Amount</th><th>Note</th><th />
             </tr></thead>
             <tbody>
               {rows.map(t => (
-                <tr key={t.base} title={t.narr || undefined}>
+                <tr key={t.base}>
                   <td className="mono"><b>{t.base}</b></td>
                   <td>{t.date}</td>
                   <td>
@@ -175,17 +219,23 @@ export function PartyJournal({ parties, history }: { parties: P[]; history: H[] 
                           <span className="chip red" style={{ marginLeft: 8 }}>pair incomplete</span></>}
                   </td>
                   <td className="num" style={{ fontWeight: 700 }}>{inr(t.amount)}</td>
+                  <td className="mut" style={{ fontSize: 11.5, maxWidth: 260 }}>
+                    {t.narr || "—"}
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button className="ib" title="Edit (updates both legs)"
+                      onClick={() => openEdit(t)}>✎</button>
+                  </td>
                 </tr>
               ))}
               {!rows.length && (
-                <tr><td colSpan={4}><div className="empty">
+                <tr><td colSpan={6}><div className="empty">
                   {txs.length ? "No transfers match the current filters." : "No journals yet."}
                 </div></td></tr>)}
             </tbody>
           </table>
         </div>
 
-        {/* pagination */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
           padding: "10px 12px 12px" }}>
           <span className="mut" style={{ fontSize: 12 }}>
@@ -202,6 +252,33 @@ export function PartyJournal({ parties, history }: { parties: P[]; history: H[] 
           </div>
         </div>
       </div>
+
+      {editTx && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(30,25,12,.55)", display: "flex",
+          alignItems: "center", justifyContent: "center", zIndex: 92, padding: 16 }}
+          onClick={e => { if (e.target === e.currentTarget) setEditTx(null); }}>
+          <div className="panel" style={{ width: 460, maxWidth: "100%", padding: 20 }}>
+            <h3 style={{ marginBottom: 4 }}>Edit journal — <span className="mono">{editTx.base}</span></h3>
+            <p className="mut" style={{ fontSize: 12, marginBottom: 12 }}>
+              Amount, date and note apply to <b>both legs</b> automatically.</p>
+            <div className="frm">
+              <div><label className="fl">Amount *</label>
+                <input className="inp mono" type="number" min="0" step="0.01" value={eAmount}
+                  onChange={e => setEAmount(e.target.value)} /></div>
+              <div><label className="fl">Date</label>
+                <input className="inp mono" type="date" value={eDate}
+                  onChange={e => setEDate(e.target.value)} /></div>
+              <div className="full"><label className="fl">Note</label>
+                <input className="inp" value={eNote} onChange={e => setENote(e.target.value)} /></div>
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+              <button className="btn" onClick={() => setEditTx(null)}>Cancel</button>
+              <button className="btn pri" disabled={pending} onClick={saveEdit}>
+                {pending ? "Saving…" : "Save both legs"}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

@@ -118,12 +118,13 @@ export async function savePurchaseAction(fd: FormData): Promise<Res> {
     const lines: VLine[] = JSON.parse(String(fd.get("lines") || "[]"));
     const valid = lines.filter(l => l.item_id && l.qty > 0 && l.rate >= 0);
     if (!valid.length) return { error: "Add at least one valid line." };
+    const partyId = String(fd.get("party_id") || "") || null;
     const date = String(fd.get("date") || "") || new Date().toISOString().slice(0, 10);
     const paidNow = String(fd.get("mode")) === "paid";
     const isGst = String(fd.get("is_gst") || "1") === "1";
     const paid = Math.max(0, +String(fd.get("paid") || 0) || 0);
     const payMode = String(fd.get("pay_mode") || "cash");
-    const partyId = String(fd.get("party_id") || "") || null;
+
     let taxable = 0, tax = 0;
     for (const l of valid) {
       l._net = Math.round(l.qty * l.rate * 100) / 100;
@@ -140,7 +141,7 @@ export async function savePurchaseAction(fd: FormData): Promise<Res> {
     const no = "PUR-" + pad(Number(seq));
     const { error: eIns } = await sb.from("vouchers").insert({
       tenant_id: s.tenantId,
-      no, type: "purchase", date, party_id: String(fd.get("party_id") || "") || null,
+      no, type: "purchase", date, party_id: partyId,
       is_gst: isGst, taxable: Math.round(taxable * 100) / 100,
       tax: isGst ? Math.round(tax * 100) / 100 : 0,
       total, paid: paidAmt, mode,
@@ -316,7 +317,7 @@ export async function postReturnAction(fd: FormData): Promise<Res> {
 }
 
 /* ================= DELETE VOUCHER (reverses stock + receipt FIFO allocations) ================= */
-/* PATCH 1: journal vouchers are a linked pair (same `ref`) — deleting one leg deletes both. */
+/* Journal vouchers are a linked pair (same `ref`) — deleting one leg deletes both. */
 export async function deleteVoucherAction(id: string): Promise<Res> {
   const { sb } = await staff();
   try {
@@ -457,6 +458,7 @@ export async function recordOrderPaymentAction(orderId: string, amount: number, 
 }
 
 /* ================= PARTY-TO-PARTY JOURNAL ================= */
+/* Custom date + note are captured from the form; note (or an auto fallback) goes on BOTH legs. */
 export async function partyJournalAction(fd: FormData): Promise<Res> {
   const s = await requireStaff();
   if (!s.tenantId) return { error: "No tenant on session." };
@@ -464,6 +466,8 @@ export async function partyJournalAction(fd: FormData): Promise<Res> {
   const fromParty = g("from_party");
   const toParty = g("to_party");
   const amount = +g("amount");
+  const d = g("date") || new Date().toISOString().slice(0, 10);
+  const note = g("narr");
   if (!fromParty || !toParty || fromParty === toParty) return { error: "Pick two different parties." };
   if (!(amount > 0)) return { error: "Enter an amount." };
   const sb = await createClient();
@@ -474,21 +478,20 @@ export async function partyJournalAction(fd: FormData): Promise<Res> {
     const no = "JNL-" + pad(Number(seq));
     const { data: fromP } = await sb.from("parties").select("name").eq("id", fromParty).single();
     const { data: toP } = await sb.from("parties").select("name").eq("id", toParty).single();
-    const d = g("date") || new Date().toISOString().slice(0, 10);
+    const narrA = note || `Party-to-party transfer: ${Math.round(amount).toLocaleString("en-IN")} moved from ${fromP?.name} to ${toP?.name}`;
+    const narrB = note || `Party-to-party transfer: received from ${fromP?.name}`;
     const { error: e1 } = await sb.from("vouchers").insert({
       tenant_id: s.tenantId, no: no + "-A", type: "journal", date: d,
       party_id: fromParty, is_gst: false, taxable: 0, tax: 0,
       total: Math.round(amount * 100) / 100, paid: 0, mode: "journal",
-      narr: `Party-to-party transfer: ${Math.round(amount).toLocaleString("en-IN")} moved from ${fromP?.name} to ${toP?.name}`,
-      lines: [], ref: no,
+      narr: narrA, lines: [], ref: no,
     });
     if (e1) return { error: e1.message };
     const { error: e2 } = await sb.from("vouchers").insert({
       tenant_id: s.tenantId, no: no + "-B", type: "journal", date: d,
       party_id: toParty, is_gst: false, taxable: 0, tax: 0,
       total: Math.round(amount * 100) / 100, paid: 0, mode: "journal",
-      narr: `Party-to-party transfer: received from ${fromP?.name}`,
-      lines: [], ref: no,
+      narr: narrB, lines: [], ref: no,
     });
     if (e2) return { error: e2.message };
     revalidatePath("/erp/ledger"); revalidatePath("/erp/books"); revalidatePath("/erp/journal");
@@ -521,7 +524,7 @@ export async function getMyVoucherAction(id: string) {
 }
 
 /* ================= EDIT RECEIPT / PAYMENT (money voucher, re-runs FIFO) ================= */
-/* PATCH 2: FIFO only for true receipts; journal pairs keep both legs amount+date synced. */
+/* Journal pairs: amount, date AND note sync across both legs. FIFO only for true receipts. */
 export async function updateMoneyVoucherAction(fd: FormData): Promise<Res> {
   const { s, sb } = await staff();
   if (!s.tenantId) return { error: "No tenant on session." };
@@ -554,15 +557,15 @@ export async function updateMoneyVoucherAction(fd: FormData): Promise<Res> {
         total: newAmt, mode: newMode, date: newDate, narr,
       }).eq("id", id);
       if (error) return { error: error.message };
-      // journal pair: the other leg must carry the same amount and date
+      // journal pair: the other leg must carry the same amount, date and note
       if (v.type === "journal" && v.ref) {
         const { error: e2 } = await sb.from("vouchers").update({
-          total: newAmt, date: newDate,
+          total: newAmt, date: newDate, narr,
         }).eq("type", "journal").eq("ref", v.ref).neq("id", id);
         if (e2) return { error: e2.message };
       }
     }
-    revalidatePath("/erp/ledger"); revalidatePath("/erp"); revalidatePath("/erp/sales");
+    revalidatePath("/erp/ledger"); revalidatePath("/erp/journal"); revalidatePath("/erp"); revalidatePath("/erp/sales");
     return { ok: true, no: v.no };
   } catch (e: any) { return { error: e.message }; }
 }
@@ -581,7 +584,7 @@ export async function editNoAction(fd: FormData): Promise<Res> {
     const { error } = await sb.from("vouchers").update({ no }).eq("id", id);
     if (error) return { error: error.message };
     revalidatePath("/erp/sales"); revalidatePath("/erp/purchreg");
-    revalidatePath("/erp/ledger"); revalidatePath("/erp");
+    revalidatePath("/erp/ledger"); revalidatePath("/erp/journal"); revalidatePath("/erp");
     return { ok: true, no };
   } catch (e: any) { return { error: e.message }; }
 }
