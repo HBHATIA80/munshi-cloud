@@ -1,29 +1,20 @@
 "use client";
 import { useMemo, useState, useTransition } from "react";
-import { partyJournalAction } from "@/sections/invoicing/actions";
-import { updateMoneyVoucherAction } from "@/sections/invoicing/actions";
+import { partyJournalAction, updateMoneyVoucherAction } from "@/sections/invoicing/actions";
 import { LiveSearch } from "@/components/LiveSearch";
 import { showAlert } from "@/components/Alert";
 import { CsvBtn } from "@/lib/CsvBtn";
 
 type P = { id: string; name: string; type: string };
-type H = { no: string; date: string; party_id: string | null; total: number; narr: string | null };
+type H = { id?: string; no: string; date: string; party_id: string | null; total: number; narr: string | null };
 
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 
 /* one transfer = the A/B leg pair of a journal (same base number) */
 type Tx = {
-  base: string; legAId: string; legBId: string;
-  date: string; amount: number;
+  base: string; date: string; amount: number;
   fromId: string | null; toId: string | null; narr: string; complete: boolean;
 };
-
-function groupTxs(history: H[]): Tx[] {
-  const byBase = new Map<string, { a?: H & { id?: string }; b?: H & { id?: string } }>();
-  // NOTE: ids needed for edit — the page query must include `id` (see Patch 3)
-  return [];
-}
-void groupTxs;
 
 export function PartyJournal({ parties, history }: { parties: P[]; history: H[] }) {
   const [pending, start] = useTransition();
@@ -53,7 +44,7 @@ export function PartyJournal({ parties, history }: { parties: P[]; history: H[] 
     const out: Tx[] = [];
     for (const [base, s] of byBase) {
       out.push({
-        base, legAId: "", legBId: "",
+        base,
         date: s.a?.date ?? s.b?.date ?? "",
         amount: +(s.a?.total ?? s.b?.total ?? 0),
         fromId: s.a?.party_id ?? null, toId: s.b?.party_id ?? null,
@@ -96,8 +87,9 @@ export function PartyJournal({ parties, history }: { parties: P[]; history: H[] 
 
   const saveEdit = () => start(async () => {
     if (!editTx) return;
-    const legId = editTx.fromId ? (history.find(h => h.no === editTx.base + "-A") as any)?.id
-      : (history.find(h => h.no === editTx.base + "-B") as any)?.id;
+    const legId = editTx.fromId
+      ? (history.find(h => h.no === editTx.base + "-A") as H | undefined)?.id
+      : (history.find(h => h.no === editTx.base + "-B") as H | undefined)?.id;
     if (!legId) { showAlert("Edit failed", "Leg id missing — refresh the page.", "❌"); return; }
     const fd = new FormData();
     fd.set("id", legId);
@@ -132,14 +124,14 @@ export function PartyJournal({ parties, history }: { parties: P[]; history: H[] 
         <div className="pb">
           <div className="frm" style={{ gridTemplateColumns: "1fr auto 1fr 1fr 1fr", gap: 10 }}>
             <div>
-              <label className="fl">From party *</label>
+              <label className="fl">From party * (who pays on our behalf)</label>
               <LiveSearch items={parties} getLabel={p => p.name} getSub={p => p.type}
                 placeholder="Type to search…" selectedId={fromId || undefined}
                 onPick={p => setFromId(p?.id ?? "")} />
             </div>
             <div style={{ alignSelf: "end", textAlign: "center", fontWeight: 700, paddingBottom: 8 }}>→</div>
             <div>
-              <label className="fl">To party *</label>
+              <label className="fl">To party * (who gets settled)</label>
               <LiveSearch items={parties} getLabel={p => p.name} getSub={p => p.type}
                 placeholder="Type to search…" selectedId={toId || undefined}
                 onPick={p => setToId(p?.id ?? "")} />
@@ -165,8 +157,10 @@ export function PartyJournal({ parties, history }: { parties: P[]; history: H[] 
             </div>
           </div>
           <p className="mut" style={{ fontSize: 12, marginTop: 10 }}>
-            From party is <b>Debited</b> (balance decreases), To party is <b>Credited</b>
-            (balance increases). Both legs edit and delete together.</p>
+            <b>From</b> = the party who pays on our behalf → <b>Credited</b> (a customer who owed you
+            owes less; e.g. Inderpuri paying your supplier). <b>To</b> = the party who receives →
+            <b> Debited</b> (what we owe them decreases; e.g. Paras getting settled). Both legs edit
+            and delete together.</p>
         </div>
       </div>
 
@@ -197,7 +191,7 @@ export function PartyJournal({ parties, history }: { parties: P[]; history: H[] 
           )}
           <span style={{ flex: 1 }} />
           <CsvBtn name="journals.csv" rows={[
-            ["No", "Date", "From (Dr)", "To (Cr)", "Amount", "Note"],
+            ["No", "Date", "From (Cr - paid)", "To (Dr - received)", "Amount", "Note"],
             ...filtered.map(t => [t.base, t.date, nameOf(t.fromId), nameOf(t.toId), t.amount, t.narr]),
           ]} />
         </div>
@@ -214,8 +208,8 @@ export function PartyJournal({ parties, history }: { parties: P[]; history: H[] 
                   <td>{t.date}</td>
                   <td>
                     {t.complete
-                      ? <><b>Dr</b> {nameOf(t.fromId)} <span className="mut">→</span> <b>Cr</b> {nameOf(t.toId)}</>
-                      : <><b>{t.fromId ? "Dr" : "Cr"}</b> {nameOf((t.fromId ?? t.toId)!)}
+                      ? <><b>Cr</b> {nameOf(t.fromId)} <span className="mut">→</span> <b>Dr</b> {nameOf(t.toId)}</>
+                      : <><b>{t.fromId ? "Cr" : "Dr"}</b> {nameOf((t.fromId ?? t.toId)!)}
                           <span className="chip red" style={{ marginLeft: 8 }}>pair incomplete</span></>}
                   </td>
                   <td className="num" style={{ fontWeight: 700 }}>{inr(t.amount)}</td>

@@ -16,6 +16,7 @@ export type VLine = {
   cost?: number;
   _net?: number;
   _tax?: number;
+  serials?: string[];   // serial numbers on this line (captured at purchase, recorded at sale)
 };
 
 export type Voucher = {
@@ -50,7 +51,8 @@ export const pad = (n: number, l = 4) => String(n).padStart(l, "0");
 
 /**
  * Party balance from vouchers + opening.  + = Dr (they owe the shop), − = Cr.
- * Journal pairs: leg "-A" (From party) is a DEBIT (+), leg "-B" (To party) is a CREDIT (−).
+ * Journal pairs ("X paid on our behalf"): leg "-A" (From/payer) is a CREDIT (−),
+ * leg "-B" (To/receiver) is a DEBIT (+).
  * Guards with String(v.no ?? "") because some callers select narrow voucher columns.
  */
 export function partyBalance(vs: Voucher[], p: Party): number {
@@ -65,9 +67,9 @@ export function partyBalance(vs: Voucher[], p: Party): number {
       case "purchase": b -= v.total; break;   // we bought → owe less
       case "receipt":  b -= v.total; break;   // they paid → owe less
       case "journal": {                        // party-to-party transfer leg
-        const no = String(v.no ?? "");         // guard: callers may not select `no`
-        if (no.endsWith("-A")) b += v.total;   // From party debited
-        else if (no.endsWith("-B")) b -= v.total; // To party credited
+        const no = String(v.no ?? "");               // guard: callers may not select `no`
+        if (no.endsWith("-A")) b -= v.total;         // From party = payer -> Credited (balance down)
+        else if (no.endsWith("-B")) b += v.total;    // To party = receiver -> Debited (balance up)
         break;
       }
     }
@@ -95,8 +97,8 @@ export function ledgerRows(vs: Voucher[], partyId: string): {
     if (v.type === "sale" || v.type === "purret" || v.type === "payment") dr = v.total;
     else if (v.type === "journal") {
       const no = String(v.no ?? "");            // guard: caller may not select `no`
-      if (no.endsWith("-A")) dr = v.total;      // From party leg = Debit
-      else cr = v.total;                         // To party leg = Credit
+      if (no.endsWith("-A")) cr = v.total;      // From party (payer) = Credit
+      else dr = v.total;                         // To party (receiver) = Debit
     }
     else cr = v.total;
     const kind = label[v.type] ?? v.type;

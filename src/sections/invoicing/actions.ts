@@ -39,7 +39,7 @@ async function reverseAlloc(sb: any, alloc: { inv_id: string; amount: number }[]
   }
 }
 
-/* ================= SALES (paid amount + mode; auto receipt voucher) ================= */
+/* ================= SALES (paid amount + mode; auto receipt; serial tracking) ================= */
 export async function saveSaleAction(fd: FormData): Promise<Res> {
   const { s, sb } = await staff();
   if (!s.tenantId) return { error: "No tenant on session." };
@@ -53,6 +53,21 @@ export async function saveSaleAction(fd: FormData): Promise<Res> {
     const date = String(fd.get("date") || "") || new Date().toISOString().slice(0, 10);
     const paid = Math.max(0, +String(fd.get("paid") || 0) || 0);
     const payMode = String(fd.get("pay_mode") || "cash");
+
+    // serial pre-validation BEFORE anything is written
+    for (const l of valid) {
+      const ser = ((l as any).serials as string[] | undefined)?.map((x: string) => x.trim()).filter(Boolean);
+      if (ser?.length) {
+        if (ser.length !== l.qty)
+          return { error: `${l.name}: ${l.qty} qty needs exactly ${l.qty} serial(s), got ${ser.length}.` };
+        const { data: owned } = await sb.from("item_serials")
+          .select("serial").eq("item_id", l.item_id!).eq("status", "in_stock");
+        const have = new Set((owned ?? []).map((r: any) => r.serial));
+        const missing = ser.filter(x => !have.has(x));
+        if (missing.length)
+          return { error: `${l.name}: serial(s) not in stock — ${missing.join(", ")}` };
+      }
+    }
 
     const { data: itemsAll } = await sb.from("items")
       .select("id,stock,cost,name,unit,hsn,gst,pr,ps");
@@ -91,6 +106,17 @@ export async function saveSaleAction(fd: FormData): Promise<Res> {
       await sb.from("items").update({ stock: (it?.stock ?? 0) - l.qty }).eq("id", l.item_id!);
     }
 
+    // mark sold serials, stamped with this invoice no (audit: release/edit scoped by sale_voucher)
+    for (const l of valid) {
+      const ser = ((l as any).serials as string[] | undefined)?.map((x: string) => x.trim()).filter(Boolean);
+      if (ser?.length) {
+        const { error: eS } = await sb.from("item_serials")
+          .update({ status: "sold", sale_voucher: no })
+          .eq("item_id", l.item_id!).eq("status", "in_stock").in("serial", ser);
+        if (eS) return { error: "Serial update failed: " + eS.message };
+      }
+    }
+
     // money received at invoice time posts its own receipt voucher
     if (partyId && paidAmt > 0) {
       const { data: rseq, error: rErr } = await sb.rpc("next_voucher",
@@ -110,7 +136,7 @@ export async function saveSaleAction(fd: FormData): Promise<Res> {
   } catch (e: any) { return { error: e.message }; }
 }
 
-/* ================= PURCHASE (paid amount + mode; auto payment voucher) ================= */
+/* ================= PURCHASE (paid amount + mode; auto payment; serial capture) ================= */
 export async function savePurchaseAction(fd: FormData): Promise<Res> {
   const { s, sb } = await staff();
   if (!s.tenantId) return { error: "No tenant on session." };
@@ -124,6 +150,13 @@ export async function savePurchaseAction(fd: FormData): Promise<Res> {
     const isGst = String(fd.get("is_gst") || "1") === "1";
     const paid = Math.max(0, +String(fd.get("paid") || 0) || 0);
     const payMode = String(fd.get("pay_mode") || "cash");
+
+    // serial pre-validation: count must match qty
+    for (const l of valid) {
+      const ser = ((l as any).serials as string[] | undefined)?.map((x: string) => x.trim()).filter(Boolean);
+      if (ser?.length && ser.length !== l.qty)
+        return { error: `${l.name}: ${l.qty} qty needs exactly ${l.qty} serial(s), got ${ser.length}.` };
+    }
 
     let taxable = 0, tax = 0;
     for (const l of valid) {
@@ -155,6 +188,22 @@ export async function savePurchaseAction(fd: FormData): Promise<Res> {
         .eq("id", l.item_id!);
     }
 
+    // insert serials for this bill (count already validated above)
+    for (const l of valid) {
+      const ser = ((l as any).serials as string[] | undefined)?.map((x: string) => x.trim()).filter(Boolean);
+      if (ser?.length) {
+        const { error: eS } = await sb.from("item_serials").insert(
+          ser.map((serial: string) => ({
+            tenant_id: s.tenantId, item_id: l.item_id!, serial, status: "in_stock",
+          })));
+        if (eS) {
+          if (eS.code === "23505")
+            return { error: `${l.name}: one or more serials already exist for this item.` };
+          return { error: "Serial save failed: " + eS.message };
+        }
+      }
+    }
+
     if (partyId && paidAmt > 0) {
       const { data: pseq, error: pErr } = await sb.rpc("next_voucher",
         { p_tenant: s.tenantId, p_kind: "payment" });
@@ -173,7 +222,7 @@ export async function savePurchaseAction(fd: FormData): Promise<Res> {
   } catch (e: any) { return { error: e.message }; }
 }
 
-/* ================= EDIT SALE (full update, same voucher no) ================= */
+/* ================= EDIT SALE (full update, same voucher no; serials re-scoped) ================= */
 export async function updateSaleAction(fd: FormData): Promise<Res> {
   const { s, sb } = await staff();
   if (!s.tenantId) return { error: "No tenant on session." };
@@ -190,6 +239,17 @@ export async function updateSaleAction(fd: FormData): Promise<Res> {
     const isGst = String(fd.get("is_gst")) === "1";
     const billDisc = Math.max(0, +String(fd.get("bill_disc") || 0));
     const date = String(fd.get("date") || "") || old.date;
+
+    // validate new serial set BEFORE writing anything
+    const newSerials: { itemId: string; list: string[] }[] = [];
+    for (const l of valid) {
+      const ser = ((l as any).serials as string[] | undefined)?.map((x: string) => x.trim()).filter(Boolean);
+      if (ser?.length) {
+        if (ser.length !== l.qty)
+          return { error: `${l.name}: ${l.qty} qty needs exactly ${l.qty} serial(s), got ${ser.length}.` };
+        newSerials.push({ itemId: l.item_id!, list: ser });
+      }
+    }
 
     // reverse the OLD stock effects
     for (const l of (old.lines as VLine[]) ?? []) {
@@ -223,6 +283,20 @@ export async function updateSaleAction(fd: FormData): Promise<Res> {
     for (const l of valid) {
       await sb.from("items").update({ stock: (sm[l.item_id!] ?? 0) - l.qty }).eq("id", l.item_id!);
     }
+
+    // serials: release everything previously sold on THIS invoice, re-mark from edited lines
+    if (old.no) {
+      await sb.from("item_serials")
+        .update({ status: "in_stock", sale_voucher: null })
+        .eq("sale_voucher", old.no).eq("status", "sold");
+    }
+    for (const ns of newSerials) {
+      const { error: eS } = await sb.from("item_serials")
+        .update({ status: "sold", sale_voucher: old.no })
+        .eq("item_id", ns.itemId).eq("status", "in_stock").in("serial", ns.list);
+      if (eS) return { error: "Serial update failed: " + eS.message };
+    }
+
     revalidatePath("/erp/sales"); revalidatePath("/erp"); revalidatePath("/shop");
     return { ok: true, no: old.no };
   } catch (e: any) { return { error: e.message }; }
@@ -316,15 +390,13 @@ export async function postReturnAction(fd: FormData): Promise<Res> {
   } catch (e: any) { return { error: e.message }; }
 }
 
-/* ================= DELETE VOUCHER (reverses stock + receipt FIFO allocations) ================= */
-/* Journal vouchers are a linked pair (same `ref`) — deleting one leg deletes both. */
+/* ================= DELETE VOUCHER (reverses stock, FIFO, serials; journals delete as pair) ================= */
 export async function deleteVoucherAction(id: string): Promise<Res> {
   const { sb } = await staff();
   try {
     const { data: v } = await sb.from("vouchers").select("*").eq("id", id).single();
     if (!v) return { error: "Not found." };
 
-    // collect the journal counterpart before deleting
     let pairIds: string[] = [];
     if (v.type === "journal" && v.ref) {
       const { data: sib } = await sb.from("vouchers")
@@ -332,14 +404,30 @@ export async function deleteVoucherAction(id: string): Promise<Res> {
       pairIds = (sib ?? []).map(r => r.id);
     }
 
-    if (v.type === "sale") for (const l of (v.lines ?? []) as VLine[]) {
-      const { data: it } = await sb.from("items").select("stock").eq("id", l.item_id!).single();
-      if (it) await sb.from("items").update({ stock: it.stock + l.qty }).eq("id", l.item_id!);
+    if (v.type === "sale") {
+      for (const l of (v.lines ?? []) as VLine[]) {
+        const { data: it } = await sb.from("items").select("stock").eq("id", l.item_id!).single();
+        if (it) await sb.from("items").update({ stock: it.stock + l.qty }).eq("id", l.item_id!);
+      }
+      if (v.no) {
+        // serials sold on this invoice return to stock
+        await sb.from("item_serials")
+          .update({ status: "in_stock", sale_voucher: null })
+          .eq("sale_voucher", v.no).eq("status", "sold");
+      }
     }
-    if (v.type === "purchase") for (const l of (v.lines ?? []) as VLine[]) {
-      const { data: it } = await sb.from("items").select("stock").eq("id", l.item_id!).single();
-      if (it) await sb.from("items").update({ stock: Math.max(0, it.stock - l.qty) })
-        .eq("id", l.item_id!);
+    if (v.type === "purchase") {
+      for (const l of (v.lines ?? []) as VLine[]) {
+        const { data: it } = await sb.from("items").select("stock").eq("id", l.item_id!).single();
+        if (it) await sb.from("items").update({ stock: Math.max(0, it.stock - l.qty) })
+          .eq("id", l.item_id!);
+      }
+      // serials captured with this bill: remove only those still in stock
+      const purSerials = ((v.lines ?? []) as any[]).flatMap(l => (l.serials as string[] | undefined) ?? []);
+      if (purSerials.length) {
+        await sb.from("item_serials").delete()
+          .in("serial", purSerials).eq("status", "in_stock");
+      }
     }
     if (v.type === "receipt" && Array.isArray(v.alloc))
       for (const a of v.alloc) {
@@ -392,6 +480,33 @@ export async function fetchVoucherByIdAction(fd: FormData) {
     sb.from("parties").select("id,name,type,state").order("name"),
   ]);
   return { v, items: items ?? [], parties: parties ?? [] };
+}
+
+/* ================= SERIAL NUMBERS ================= */
+export async function serialsForItemAction(itemId: string) {
+  const s = await requireStaff();
+  const sb = await createClient();
+  const { data } = await sb.from("item_serials")
+    .select("id,serial,status,sale_voucher").eq("item_id", itemId)
+    .eq("status", "in_stock").order("created_at");
+  return data ?? [];
+}
+
+export async function addSerialsAction(fd: FormData): Promise<Res> {
+  const s = await requireStaff();
+  if (!s.tenantId) return { error: "No tenant on session." };
+  const itemId = String(fd.get("item_id") || "");
+  const raw = String(fd.get("serials") || "");
+  const list = raw.split(/[\n,;\t]+/).map(x => x.trim()).filter(Boolean);
+  if (!itemId || !list.length) return { error: "Pick an item and enter at least one serial." };
+  const sb = await createClient();
+  const { error } = await sb.from("item_serials").insert(
+    list.map(serial => ({ tenant_id: s.tenantId, item_id: itemId, serial, status: "in_stock" })));
+  if (error) {
+    if (error.code === "23505") return { error: "Some serials already exist for this item." };
+    return { error: error.message };
+  }
+  return { ok: true } as any;
 }
 
 /* ================= ONLINE ORDERS ================= */
@@ -458,7 +573,7 @@ export async function recordOrderPaymentAction(orderId: string, amount: number, 
 }
 
 /* ================= PARTY-TO-PARTY JOURNAL ================= */
-/* Custom date + note are captured from the form; note (or an auto fallback) goes on BOTH legs. */
+/* Custom date + note from the form; note (or auto fallback) goes on BOTH legs. */
 export async function partyJournalAction(fd: FormData): Promise<Res> {
   const s = await requireStaff();
   if (!s.tenantId) return { error: "No tenant on session." };
@@ -503,7 +618,6 @@ export async function partyJournalAction(fd: FormData): Promise<Res> {
 export async function getMyVoucherAction(id: string) {
   const s = await requireCustomer();
   const sb = await createClient();
-  // RLS guarantees customers can only select their own vouchers
   const { data: v } = await sb.from("vouchers").select("*").eq("id", id).single();
   if (!v) return null;
   let party = null;
@@ -541,7 +655,6 @@ export async function updateMoneyVoucherAction(fd: FormData): Promise<Res> {
     const newMode = String(fd.get("mode") || v.mode);
 
     if (v.type === "receipt") {
-      // reverse old FIFO allocations, then re-run with the new amount
       await reverseAlloc(sb, (v.alloc ?? []) as any);
       const { alloc, unapplied } = await fifoAllocate(sb, v.party_id, newAmt);
       const base = narr.split("adjusted:")[0].split("on account")[0].trim();
@@ -557,7 +670,6 @@ export async function updateMoneyVoucherAction(fd: FormData): Promise<Res> {
         total: newAmt, mode: newMode, date: newDate, narr,
       }).eq("id", id);
       if (error) return { error: error.message };
-      // journal pair: the other leg must carry the same amount, date and note
       if (v.type === "journal" && v.ref) {
         const { error: e2 } = await sb.from("vouchers").update({
           total: newAmt, date: newDate, narr,

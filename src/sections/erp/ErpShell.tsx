@@ -29,6 +29,7 @@ const NAV = [
     { href: "/erp/parties", label: "Parties", icon: "◔" },
     { href: "/erp/cats", label: "Categories & Brands", icon: "◈" },
     { href: "/erp/compat", label: "Part Compatibility", icon: "🔗" },
+    { href: "/erp/serials", label: "Serial Lookup", icon: "#️⃣" },
   ]},
   { sec: "Accounts", items: [
     { href: "/erp/ledger", label: "Party Ledgers", icon: "❑" },

@@ -24,35 +24,40 @@ export function MoneyView({ type, parties, history }: {
       <div className="panel">
         <div className="ph"><h3>{isR ? "Record money received" : "Record money paid"}</h3></div>
         <div className="pb">
-          <div className="frm" style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr" }}>
-            <div>
-              <label className="fl">{isR ? "From party" : "To party"} *</label>
-              <LiveSearch items={parties} getLabel={p => p.name}
-                getSub={p => p.type}
-                placeholder="Type to search among all parties…"
-                selectedId={pid || undefined}
-                onPick={p => setPid(p?.id ?? "")} />
-              <input type="hidden" name="party_id" value={pid} />
+          {/* THE FIX: everything inside one form — button submits, Enter submits, Tab flows naturally */}
+          <form action={submit} autoComplete="off">
+            <div className="frm" style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr" }}>
+              <div>
+                <label className="fl">{isR ? "From party" : "To party"} *</label>
+                <LiveSearch items={parties} getLabel={p => p.name}
+                  getSub={p => p.type}
+                  placeholder="Type to search among all parties…"
+                  selectedId={pid || undefined}
+                  onPick={p => setPid(p?.id ?? "")} />
+                <input type="hidden" name="party_id" value={pid} />
+              </div>
+              <div><label className="fl">Amount *</label>
+                <input className="inp mono" name="amount" type="number" min="0" step="0.01"
+                  inputMode="decimal" required /></div>
+              <div><label className="fl">Mode</label>
+                <select className="inp" name="mode" defaultValue="cash">
+                  {["cash", "upi", "bank", "cheque"].map(m => <option key={m}>{m}</option>)}
+                </select></div>
+              <div><label className="fl">Date</label>
+                <input className="inp mono" type="date" name="date"
+                  defaultValue={new Date().toISOString().slice(0, 10)} /></div>
+              <div className="full"><label className="fl">Note</label>
+                <input className="inp" name="narr" /></div>
             </div>
-            <div><label className="fl">Amount *</label>
-              <input className="inp mono" name="amount" type="number" min="0" /></div>
-            <div><label className="fl">Mode</label>
-              <select className="inp" name="mode">
-                {["cash", "upi", "bank", "cheque"].map(m => <option key={m}>{m}</option>)}
-              </select></div>
-            <div><label className="fl">Date</label>
-              <input className="inp mono" type="date" name="date"
-                defaultValue={new Date().toISOString().slice(0, 10)} /></div>
-            <div className="full"><label className="fl">Note</label>
-              <input className="inp" name="narr" /></div>
-          </div>
-          <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center" }}>
-            <button className="btn pri" disabled={pending}>
-              {pending ? "Posting…" : "Post " + (isR ? "receipt" : "payment")}</button>
-            <span className="mut" style={{ fontSize: 12 }}>
-              {isR && "Receipts auto-adjust the oldest unpaid invoices first (FIFO)."}</span>
-          </div>
-          {err && <p className="neg" style={{ fontSize: 13, marginTop: 10 }}>{err}</p>}
+            <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center" }}>
+              <button className="btn pri" type="submit" disabled={pending}>
+                {pending ? "Posting…" : "Post " + (isR ? "receipt" : "payment")}</button>
+              <span className="mut" style={{ fontSize: 12 }}>
+                {isR && "Receipts auto-adjust the oldest unpaid invoices first (FIFO)."}
+              </span>
+            </div>
+            {err && <p className="neg" style={{ fontSize: 13, marginTop: 10 }}>{err}</p>}
+          </form>
         </div>
       </div>
 

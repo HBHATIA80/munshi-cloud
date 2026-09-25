@@ -157,15 +157,14 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                   <tr key={i}>
                     <td><b>{r.p.name}</b></td>
                     <td><span className="chip">{r.p.type}</span></td>
-                    <td className="num neg">{r.b > 0 ? inr(r.b) : ""}</td>
-                    <td className="num">{r.b < 0 ? inr(-r.b) : ""}</td>
-                  </tr>))}
+                                        <td className="num pos">{r.b > 0 ? inr(r.b) : ""}</td>
+                    <td className="num neg">{r.b < 0 ? inr(-r.b) : ""}</td>
+                    </tr>))}
                 {!rows.length && <tr><td colSpan={4}><div className="empty">All settled.</div></td></tr>}
               </tbody>
               <tfoot>
-                <tr className="tfo"><td colSpan={2}>Totals</td>
-                  <td className="num">{inr(totThey)}</td><td className="num">{inr(totWe)}</td></tr>
-                <tr className="tfo"><td colSpan={2}>Net (they owe − we owe)</td>
+                               <tr className="tfo"><td colSpan={2}>Totals</td>
+                  <td className="num pos">{inr(totThey)}</td><td className="num neg">{inr(totWe)}</td></tr>  <tr className="tfo"><td colSpan={2}>Net (they owe − we owe)</td>
                   <td className="num" colSpan={2}>{net >= 0 ? "+" : "−"}{inr(Math.abs(net))}</td></tr>
               </tfoot>
             </table></div>

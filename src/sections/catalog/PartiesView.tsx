@@ -83,7 +83,8 @@ export function PartiesView({ rows, cap, used }: {
                 {r.type}</span></td>
               <td className="mono" style={{ fontSize: 11.5 }}>{r.mobile || "—"}</td>
               <td className="mut">{r.state || "—"}</td>
-              <td className="num" style={{ fontWeight: 700, color: r.balance < 0 ? "var(--green)" : "inherit" }}>
+                            <td className="num" style={{ fontWeight: 700,
+                color: r.balance >= 0 ? "var(--green, #1a7f37)" : "var(--red, #c62828)" }}>
                 {inr(r.balance)} {r.balance >= 0 ? "Dr" : "Cr"}</td>
               <td style={{ whiteSpace: "nowrap" }}>
                 <button className="ib" title="Edit" onClick={() => setEdit(r)}>✎</button>

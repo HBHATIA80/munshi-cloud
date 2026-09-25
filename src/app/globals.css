@@ -250,3 +250,24 @@ textarea.inp{resize:vertical}
   .seg-toggle{width:100%}
   .seg-toggle button{flex:1}
 }
+/* ===== keyboard accessibility: visible focus for Tab users ===== */
+.inp:focus-visible, .btn:focus-visible, .ib:focus-visible, .fchip:focus-visible,
+.si:focus-visible, .nl:focus-visible, .linkish:focus-visible,
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible {
+  outline: 2px solid var(--brand, #2f6b3a);
+  outline-offset: 2px;
+}
+
+/* ===== small screens: single-column forms, wrapping toolbars, scrollable tables ===== */
+@media (max-width: 720px) {
+  .frm { grid-template-columns: 1fr !important; gap: 10px !important; }
+  .frm .full { grid-column: auto !important; }
+  .kpis { grid-template-columns: repeat(2, 1fr) !important; }
+  .grid2 { grid-template-columns: 1fr !important; }
+  .pgrid { grid-template-columns: 1fr !important; }
+  .tool { flex-wrap: wrap; gap: 8px; }
+  .tool .inp, .tool select, .tool input { max-width: 100% !important; flex: 1 1 140px; }
+  .tblw { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .t { min-width: 560px; }               /* tables scroll instead of squashing */
+  .panel { padding: 14px !important; }
+}

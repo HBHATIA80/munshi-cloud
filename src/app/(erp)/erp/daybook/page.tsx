@@ -21,7 +21,7 @@ export default async function DayBookPage({ searchParams }: { searchParams: Prom
   const V = (vs ?? []) as unknown as V[];
 
   // One transaction = one row. Journal pairs (JNL-x-A + JNL-x-B) collapse into a
-  // single line showing both parties, so the day total counts the transfer once.
+  // single line: Cr payer → Dr receiver. Day total counts the transfer once.
   const rows: Row[] = [];
   const used = new Set<string>();
   for (const v of V) {
@@ -34,7 +34,7 @@ export default async function DayBookPage({ searchParams }: { searchParams: Prom
       if (b) used.add(b.id);
       if (a && b) {
         rows.push({ key: base, no: base, type: "journal",
-          party: `Dr ${nameOf(a.party_id)} → Cr ${nameOf(b.party_id)}`,
+          party: `Cr ${nameOf(a.party_id)} → Dr ${nameOf(b.party_id)}`,
           mode: v.mode, total: +a.total });
       } else {
         const leg = (a ?? b)!;

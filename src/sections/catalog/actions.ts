@@ -5,6 +5,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireStaff } from "@/lib/auth";
 import { customerCap } from "@/lib/plans";
 
+type Res = { error?: string; ok?: boolean; id?: string; added?: number };
+
 /* ---------- helpers ---------- */
 async function staffAndTenant() {
   const s = await requireStaff();
@@ -23,7 +25,7 @@ async function uploadImage(dataUrl: string, tenantId: string): Promise<string> {
   return data.publicUrl;
 }
 
-/** true if another item in this tenant has the same name + category + sub + brand */
+/** true if another item in this tenant has the same name + category + sub + brand (case-insensitive) */
 async function duplicateExists(sb: any, tenantId: string, name: string,
   catId: string | null, subId: string | null, brandId: string | null, excludeId?: string) {
   let q = sb.from("items").select("id,name")
@@ -37,6 +39,11 @@ async function duplicateExists(sb: any, tenantId: string, name: string,
   return !!(data && data.length);
 }
 
+const dupErr = (e: any, label: string) =>
+  e?.code === "23505" || /duplicate|unique/i.test(e?.message ?? "")
+    ? `${label} already exists (names are unique regardless of capitals).`
+    : e?.message ?? "Save failed.";
+
 /* ================= ITEMS ================= */
 export async function saveItemAction(fd: FormData) {
   const { s, sb } = await staffAndTenant();
@@ -49,7 +56,7 @@ export async function saveItemAction(fd: FormData) {
   const brandId = g("brand_id") || null;
   if (!name) throw new Error("Item name is required.");
 
-  // duplicate guard: same name + category + sub-category + brand in this shop
+  // duplicate guard: same name + category + sub-category + brand in this shop (caps ignored)
   if (await duplicateExists(sb, s.tenantId, name, catId, subId, brandId, id || undefined))
     throw new Error(`"${name}" already exists with this category, sub-category and brand. ` +
       `Edit the existing item instead, or change the name/category to make it distinct.`);
@@ -64,17 +71,20 @@ export async function saveItemAction(fd: FormData) {
     hsn: g("hsn"), gst: +g("gst") || 0,
     cost: +g("cost") || 0, pr: +g("pr") || 0, ps: +g("ps") || 0, mrp: +g("mrp") || 0,
     low: +g("low") || 5,
+    has_serial: String(fd.get("has_serial")) === "1",   // serial-tracked item flag
   };
   if (image_url) vals.image_url = image_url;
   if (!id) vals.stock = +g("stock") || 0;
 
-  if (id) {
-    const { error } = await sb.from("items").update(vals).eq("id", id);
-    if (error) throw new Error(error.message);
-  } else {
-    const { error } = await sb.from("items").insert({ ...vals, tenant_id: s.tenantId });
-    if (error) throw new Error(error.message);
-  }
+  try {
+    if (id) {
+      const { error } = await sb.from("items").update(vals).eq("id", id);
+      if (error) throw error;
+    } else {
+      const { error } = await sb.from("items").insert({ ...vals, tenant_id: s.tenantId });
+      if (error) throw error;
+    }
+  } catch (e: any) { throw new Error(dupErr(e, "Item")); }
   revalidatePath("/erp/items"); revalidatePath("/erp/cats"); revalidatePath("/shop");
 }
 
@@ -85,27 +95,83 @@ export async function deleteItemAction(id: string) {
   revalidatePath("/erp/items"); revalidatePath("/shop");
 }
 
-/* ================= CATEGORIES (return new id — inline add from item form) ================= */
+/* ================= SERIAL NUMBERS (manual add + lookup; voucher flows live in invoicing/actions.ts) ================= */
+export async function addSerialsAction(fd: FormData): Promise<Res> {
+  const { s } = await staffAndTenant();
+  if (!s.tenantId) return { error: "No tenant on session." };
+  const itemId = String(fd.get("item_id") || "");
+  const raw = String(fd.get("serials") || "");
+  const list = raw.split(/[\n,;\t]+/).map(x => x.trim()).filter(Boolean);
+  if (!itemId || !list.length) return { error: "Pick an item and enter at least one serial." };
+  const sb = await createClient();
+  const { error } = await sb.from("item_serials").insert(
+    list.map(serial => ({ tenant_id: s.tenantId, item_id: itemId, serial, status: "in_stock" })));
+  if (error) {
+    if (error.code === "23505") return { error: "Some serials already exist for this item." };
+    return { error: error.message };
+  }
+  return { ok: true, added: list.length };
+}
+
+/** in-stock serials for a picker (sale forms) */
+export async function serialsForItemAction(itemId: string) {
+  const s = await requireStaff();
+  const sb = await createClient();
+  const { data } = await sb.from("item_serials")
+    .select("id,serial,status,sale_voucher").eq("item_id", itemId)
+    .eq("status", "in_stock").order("created_at");
+  return data ?? [];
+}
+
+/** all serials of an item (any status) — for the item master / audit view */
+export async function allSerialsForItemAction(itemId: string) {
+  const s = await requireStaff();
+  const sb = await createClient();
+  const { data } = await sb.from("item_serials")
+    .select("id,serial,status,sale_voucher,created_at").eq("item_id", itemId)
+    .order("created_at", { ascending: false });
+  return data ?? [];
+}
+
+/* ================= CATEGORIES (case-insensitive duplicates blocked) ================= */
 export async function saveCatAction(name: string, emoji: string)
   : Promise<{ id?: string; error?: string }> {
   const { s, sb } = await staffAndTenant();
   if (!s.tenantId) return { error: "No tenant" };
-  const { data, error } = await sb.from("categories")
-    .insert({ name, emoji: emoji || "📦", tenant_id: s.tenantId }).select("id").single();
-  if (error) return { error: error.message };
-  revalidatePath("/erp/cats"); revalidatePath("/shop");
-  return { id: data.id };
+  const nm = name.trim();
+  if (!nm) return { error: "Category name is required." };
+  // duplicate guard: same top-level category name, caps ignored
+  const { data: dup } = await sb.from("categories")
+    .select("id,name").eq("tenant_id", s.tenantId).is("parent_id", null)
+    .ilike("name", nm).limit(1);
+  if (dup?.length) return { error: `Category "${dup[0].name}" already exists (capitals don't matter).` };
+  try {
+    const { data, error } = await sb.from("categories")
+      .insert({ name: nm, emoji: emoji || "📦", tenant_id: s.tenantId }).select("id").single();
+    if (error) throw error;
+    revalidatePath("/erp/cats"); revalidatePath("/shop");
+    return { id: data.id };
+  } catch (e: any) { return { error: dupErr(e, "Category") }; }
 }
 
 export async function saveSubAction(name: string, parentId: string)
   : Promise<{ id?: string; error?: string }> {
   const { s, sb } = await staffAndTenant();
   if (!s.tenantId) return { error: "No tenant" };
-  const { data, error } = await sb.from("categories")
-    .insert({ name, parent_id: parentId, tenant_id: s.tenantId }).select("id").single();
-  if (error) return { error: error.message };
-  revalidatePath("/erp/cats"); revalidatePath("/shop");
-  return { id: data.id };
+  const nm = name.trim();
+  if (!nm || !parentId) return { error: "Category and sub-category name are required." };
+  // duplicate guard: same name under the SAME parent, caps ignored
+  const { data: dup } = await sb.from("categories")
+    .select("id,name").eq("tenant_id", s.tenantId).eq("parent_id", parentId)
+    .ilike("name", nm).limit(1);
+  if (dup?.length) return { error: `Sub-category "${dup[0].name}" already exists under this category.` };
+  try {
+    const { data, error } = await sb.from("categories")
+      .insert({ name: nm, parent_id: parentId, tenant_id: s.tenantId }).select("id").single();
+    if (error) throw error;
+    revalidatePath("/erp/cats"); revalidatePath("/shop");
+    return { id: data.id };
+  } catch (e: any) { return { error: dupErr(e, "Sub-category") }; }
 }
 
 export async function deleteCatAction(id: string) {
@@ -116,15 +182,23 @@ export async function deleteCatAction(id: string) {
   revalidatePath("/erp/cats"); revalidatePath("/shop");
 }
 
-/* ================= BRANDS (return new id — inline add from item form) ================= */
+/* ================= BRANDS (case-insensitive duplicates blocked) ================= */
 export async function saveBrandAction(name: string): Promise<{ id?: string; error?: string }> {
   const { s, sb } = await staffAndTenant();
   if (!s.tenantId) return { error: "No tenant" };
-  const { data, error } = await sb.from("brands")
-    .insert({ name, tenant_id: s.tenantId }).select("id").single();
-  if (error) return { error: error.message };
-  revalidatePath("/erp/cats"); revalidatePath("/erp/items"); revalidatePath("/shop");
-  return { id: data.id };
+  const nm = name.trim();
+  if (!nm) return { error: "Brand name is required." };
+  // duplicate guard: same brand name, caps ignored
+  const { data: dup } = await sb.from("brands")
+    .select("id,name").eq("tenant_id", s.tenantId).ilike("name", nm).limit(1);
+  if (dup?.length) return { error: `Brand "${dup[0].name}" already exists (capitals don't matter).` };
+  try {
+    const { data, error } = await sb.from("brands")
+      .insert({ name: nm, tenant_id: s.tenantId }).select("id").single();
+    if (error) throw error;
+    revalidatePath("/erp/cats"); revalidatePath("/erp/items"); revalidatePath("/shop");
+    return { id: data.id };
+  } catch (e: any) { return { error: dupErr(e, "Brand") }; }
 }
 
 export async function deleteBrandAction(id: string) {

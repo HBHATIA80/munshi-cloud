@@ -1,14 +1,15 @@
 "use client";
-import { useActionState, useEffect, useRef, useState } from "react";
+import { Fragment, useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { savePurchaseAction } from "./actions";
 import { LiveSearch } from "@/components/LiveSearch";
+import { SerialInput } from "./SerialInput";
 
 type Item = { id: string; name: string; sku?: string; unit?: string; hsn?: string;
-  gst: number; cost: number };
+  gst: number; cost: number; has_serial: boolean };
 type Sup = { id: string; name: string };
 type Line = { item_id: string; name: string; unit: string; hsn: string;
-  qty: number; rate: number; gst: number; cost: number };
+  qty: number; rate: number; gst: number; cost: number; serials?: string[] };
 
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const cell: React.CSSProperties = { padding: "4px 6px" };
@@ -49,7 +50,8 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
     const it = items.find(x => x.id === id);
     if (!it) { setL(i, { item_id: "", name: "", unit: "pc", hsn: "", rate: 0, cost: 0 }); return; }
     setL(i, { item_id: it.id, name: it.name, unit: it.unit ?? "pc", hsn: it.hsn ?? "",
-      rate: it.cost, gst: it.gst, cost: it.cost, qty: 1 });
+      rate: it.cost, gst: it.gst, cost: it.cost, qty: 1,
+      serials: it.has_serial ? [] : undefined });
   };
 
   const addLine = (goSearch = false) => {
@@ -172,41 +174,60 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
                 <tbody id="purchLines">
                   {lines.map((l, i) => {
                     const it = items.find(x => x.id === l.item_id);
+                    const tracked = !!it && it.has_serial;
+                    const cols = isGst ? 6 : 5;
                     return (
-                      <tr key={i}>
-                        <td style={{ ...cell, position: "relative", minWidth: 200 }}>
-                          {searchRow === i ? (
-                            <LiveSearch items={items} getLabel={x => x.name}
-                              getSub={x => "cost " + inr(x.cost) + " excl."} width="100%"
-                              placeholder="Type to search item…"
-                              selectedId={l.item_id || undefined}
-                              onPick={x => { pickItem(i, x?.id ?? ""); setSearchRow(null); }} />
-                          ) : (
-                            <div onClick={() => setSearchRow(i)}
-                              style={{ cursor: "pointer", minHeight: 38,
-                                display: "flex", alignItems: "center", gap: 6 }}>
-                              <b>{l.name || <span className="mut">Click / F2 to pick item</span>}</b>
-                            </div>
-                          )}
-                        </td>
-                        <td style={cell}>
-                          <input className="inp mono" type="number" min="0" style={{ width: 62 }}
-                            value={l.qty} onKeyDown={rowEnter(i)} onFocus={() => setSearchRow(null)}
-                            onChange={e => setL(i, { qty: Math.max(0, +e.target.value || 0) })} /></td>
-                        <td style={cell}>
-                          <input className="inp mono" type="number" min="0" step="0.01" style={{ width: 84 }}
-                            value={l.rate} onKeyDown={rowEnter(i)} onFocus={() => setSearchRow(null)}
-                            onChange={e => setL(i, { rate: Math.max(0, +e.target.value || 0) })} /></td>
-                        {isGst && <td style={cell}>
-                          <input className="inp mono" type="number" min="0" style={{ width: 54 }}
-                            value={l.gst} onKeyDown={rowEnter(i)} onFocus={() => setSearchRow(null)}
-                            onChange={e => setL(i, { gst: Math.max(0, +e.target.value || 0) })} /></td>}
-                        <td className="num" style={{ ...cell, fontWeight: 700,
-                            whiteSpace: "nowrap" }}>{inr(l.qty * l.rate)}</td>
-                        <td style={cell}>
-                          <button type="button" className="ib" title="Remove"
-                            onClick={() => rmLine(i)}>✕</button></td>
-                      </tr>);
+                      <Fragment key={i}>
+                        <tr>
+                          <td style={{ ...cell, position: "relative", minWidth: 200 }}>
+                            {searchRow === i ? (
+                              <LiveSearch items={items} getLabel={x => x.name}
+                                getSub={x => (x.has_serial ? "S/N · " : "") + "cost " + inr(x.cost) + " excl."}
+                                width="100%"
+                                placeholder="Type to search item…"
+                                selectedId={l.item_id || undefined}
+                                onPick={x => { pickItem(i, x?.id ?? ""); setSearchRow(null); }} />
+                            ) : (
+                              <div onClick={() => setSearchRow(i)}
+                                style={{ cursor: "pointer", minHeight: 38,
+                                  display: "flex", alignItems: "center", gap: 6 }}>
+                                <b>{l.name || <span className="mut">Click / F2 to pick item</span>}</b>
+                                {tracked && <span className="chip blu">S/N</span>}
+                              </div>
+                            )}
+                          </td>
+                          <td style={cell}>
+                            <input className="inp mono" type="number" min="0" style={{ width: 62 }}
+                              value={l.qty} onKeyDown={rowEnter(i)} onFocus={() => setSearchRow(null)}
+                              onChange={e => {
+                                const n = Math.max(0, +e.target.value || 0);
+                                setL(i, { qty: n, serials: (l.serials ?? []).slice(0, n) });
+                              }} /></td>
+                          <td style={cell}>
+                            <input className="inp mono" type="number" min="0" step="0.01" style={{ width: 84 }}
+                              value={l.rate} onKeyDown={rowEnter(i)} onFocus={() => setSearchRow(null)}
+                              onChange={e => setL(i, { rate: Math.max(0, +e.target.value || 0) })} /></td>
+                          {isGst && <td style={cell}>
+                            <input className="inp mono" type="number" min="0" style={{ width: 54 }}
+                              value={l.gst} onKeyDown={rowEnter(i)} onFocus={() => setSearchRow(null)}
+                              onChange={e => setL(i, { gst: Math.max(0, +e.target.value || 0) })} /></td>}
+                          <td className="num" style={{ ...cell, fontWeight: 700,
+                              whiteSpace: "nowrap" }}>{inr(l.qty * l.rate)}</td>
+                          <td style={cell}>
+                            <button type="button" className="ib" title="Remove"
+                              onClick={() => rmLine(i)}>✕</button></td>
+                        </tr>
+                        {/* serial entry — tracked items only, OPTIONAL (skip = not tracked for this bill) */}
+                        {tracked && (
+                          <tr>
+                            <td colSpan={cols} style={{ ...cell, background: "#fbfaf4" }}>
+                              <SerialInput qty={l.qty} value={l.serials ?? []}
+                                onChange={v => setL(i, { serials: v })} />
+                              <div className="mut" style={{ fontSize: 11, marginTop: 4 }}>
+                                Optional — leave empty if you don't track serials for this bill.</div>
+                            </td>
+                          </tr>)}
+                      </Fragment>);
                     })}
                   {!lines.length && (
                     <tr><td colSpan={isGst ? 6 : 5}>

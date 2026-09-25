@@ -30,11 +30,10 @@ export default async function ErpDash() {
           <div className="s">{ms.length} invoices</div></div>
         <div className="kpi"><div className="l">Gross profit</div>
           <div className="v pos">{fmt0(Math.round(rev - cogs))}</div><div className="s">month to date</div></div>
-        <div className="kpi"><div className="l">Receivables</div><div className="v neg">{fmt0(Math.round(recv))}</div>
+          <div className="kpi"><div className="l">Receivables</div><div className="v pos">{fmt0(Math.round(recv))}</div>
           <div className="s">to collect</div></div>
-        <div className="kpi"><div className="l">Payables</div><div className="v">{fmt0(Math.round(pay))}</div>
-          <div className="s">to suppliers</div></div>
-        <div className="kpi"><div className="l">Website orders</div><div className="v">{orders?.length ?? 0}</div>
+        <div className="kpi"><div className="l">Payables</div><div className="v neg">{fmt0(Math.round(pay))}</div>
+          <div className="s">to suppliers</div></div>      <div className="kpi"><div className="l">Website orders</div><div className="v">{orders?.length ?? 0}</div>
           <div className="s">awaiting confirmation</div></div>
         <div className="kpi"><div className="l">Low stock</div>
           <div className="v" style={{ color: lows.length ? "var(--amber)" : "inherit" }}>{lows.length}</div>

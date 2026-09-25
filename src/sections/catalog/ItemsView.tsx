@@ -10,7 +10,8 @@ type Cat = { id: string; name: string; emoji: string; parent_id: string | null }
 type Brand = { id: string; name: string };
 type Item = { id: string; name: string; sku: string; unit: string; cat_id: string | null;
   sub_id: string | null; brand_id: string | null; hsn: string; gst: number; cost: number;
-  pr: number; ps: number; mrp: number; stock: number; low: number; image_url: string };
+  pr: number; ps: number; mrp: number; stock: number; low: number; image_url: string;
+  has_serial: boolean };
 
 const inr = (n: number) => "₹" + Math.round(+n || 0).toLocaleString("en-IN");
 const inclOf = (v: string, gst: number) => {
@@ -81,17 +82,17 @@ export function ItemsView({ items, cats, brands }: { items: Item[]; cats: Cat[];
         <span style={{ flex: 1 }} />
         <button className="btn" onClick={() => downloadCsv("items.csv", [
           ["Name", "SKU", "Unit", "Category", "Brand", "HSN", "GST%", "Cost", "Retail", "Trade",
-            "MRP", "Stock", "Low alert"],
+            "MRP", "Stock", "Low alert", "Serial-tracked"],
           ...list.map(i => [i.name, i.sku, i.unit,
             cats.find(c => c.id === i.cat_id)?.name ?? "", brands.find(b => b.id === i.brand_id)?.name ?? "",
-            i.hsn, i.gst, i.cost, i.pr, i.ps, i.mrp, i.stock, i.low]),
+            i.hsn, i.gst, i.cost, i.pr, i.ps, i.mrp, i.stock, i.low, i.has_serial ? "yes" : ""]),
         ])}>⭳ CSV</button>
         <button className="btn pri" onClick={() => setEdit("new")}>＋ Add product</button>
       </div>
       <div className="panel"><div className="tblw"><table className="t">
         <thead><tr><th>Product</th><th>Category</th><th>Brand</th><th className="num">GST</th>
           <th className="num">Cost (excl)</th><th className="num">Retail (excl)</th>
-          <th className="num">Trade (excl)</th><th className="num">Stock</th><th /></tr></thead>
+          <th className="num">Trade (excl)</th><th className="num">Stock</th><th>Serials</th><th /></tr></thead>
         <tbody>
           {view.map(i => {
             const c = cats.find(x => x.id === i.cat_id);
@@ -111,6 +112,7 @@ export function ItemsView({ items, cats, brands }: { items: Item[]; cats: Cat[];
                 <td className="num" style={{ fontWeight: 700,
                     color: i.stock <= 0 ? "var(--red)" : i.stock <= i.low ? "var(--amber)" : "inherit" }}>
                   {i.stock}</td>
+                <td>{i.has_serial ? <span className="chip blu" title="Serial-tracked">S/N</span> : <span className="mut">—</span>}</td>
                 <td style={{ whiteSpace: "nowrap" }}>
                   <button className="ib" title="Edit" onClick={() => setEdit(i)}>✎</button>
                   <button className="ib" title="Delete" onClick={async () => {
@@ -122,7 +124,7 @@ export function ItemsView({ items, cats, brands }: { items: Item[]; cats: Cat[];
                 </td>
               </tr>);
           })}
-          {!list.length && <tr><td colSpan={9}><div className="empty">No products match — add your first one.</div></td></tr>}
+          {!list.length && <tr><td colSpan={10}><div className="empty">No products match — add your first one.</div></td></tr>}
         </tbody>
       </table></div></div>
 
@@ -167,25 +169,29 @@ function ItemForm({ item, cats, brands, allItems, onClose }: {
   const [cost, setCost] = useState(String(item?.cost ?? ""));
   const [pr, setPr] = useState(String(item?.pr ?? ""));
   const [ps, setPs] = useState(String(item?.ps ?? ""));
-  const [gst, setGst] = useState<number>(item?.gst ?? 0);   // default 0%
+  const [gst, setGst] = useState<number>(item?.gst ?? 0);
+  const [hasSerial, setHasSerial] = useState<boolean>(item?.has_serial ?? false);
 
-  /* soft duplicate warning: same name + category + sub + brand (case-insensitive) */
+  /* hard duplicate check: case-insensitive, server-enforced (also by unique index) */
   const dupe = !item && allItems.find(i =>
     i.name.trim().toLowerCase() === name.trim().toLowerCase() &&
-    (i.cat_id ?? null) === (catId ?? null) &&
-    (i.sub_id ?? null) === (subId ?? null) &&
-    (i.brand_id ?? null) === (brandId ?? null));
+    (i.cat_id ?? null) === (catId ?? null));
 
   const submit = (fd: FormData) => {
-    // send the id so saveItemAction UPDATEs instead of INSERTing
     if (item) fd.set("id", item.id);
     if (img.startsWith("data:image")) fd.set("image", img);
     fd.set("cat_id", catId ?? "");
     fd.set("sub_id", subId ?? "");
     fd.set("brand_id", brandId ?? "");
+    fd.set("has_serial", hasSerial ? "1" : "0");
     start(async () => {
       try { await saveItemAction(fd); onClose(); }
-      catch (e: any) { showAlert("Save failed", e.message, "❌"); }
+      catch (e: any) {
+        showAlert("Save failed",
+          e?.code === "23505" || /duplicate|unique/i.test(e?.message ?? "")
+            ? "That name already exists (names are unique regardless of capitals)."
+            : e.message, "❌");
+      }
     });
   };
 
@@ -213,8 +219,8 @@ function ItemForm({ item, cats, brands, allItems, onClose }: {
                 onChange={e => setName(e.target.value)} required />
               {dupe && (
                 <p className="neg" style={{ fontSize: 11.5, marginTop: 4 }}>
-                  ⚠ “{dupe.name}” already exists with this category, sub-category and brand —
-                  the save will be blocked. Edit the existing item instead.</p>)}
+                  ⚠ “{dupe.name}” already exists — names are unique regardless of capitals.
+                  Edit the existing item instead.</p>)}
             </div>
             <div><label className="fl">SKU</label><input className="inp mono" name="sku" defaultValue={item?.sku ?? ""} /></div>
             <div><label className="fl">Unit</label><select className="inp" name="unit" defaultValue={item?.unit ?? "pc"}>
@@ -275,11 +281,24 @@ function ItemForm({ item, cats, brands, allItems, onClose }: {
             {item && <div className="full mut" style={{ fontSize: 11.5 }}>
               Stock on existing items changes through Purchases — keeps the books honest.</div>}
             <div><label className="fl">Low-stock alert</label><input className="inp mono" name="low" type="number" defaultValue={item?.low ?? 5} /></div>
+            <div className="full" style={{ display: "flex", alignItems: "center", gap: 10,
+              padding: "10px 12px", border: "1px solid var(--line)", borderRadius: 10 }}>
+              <input type="checkbox" id="has_serial" checked={hasSerial}
+                onChange={e => setHasSerial(e.target.checked)}
+                style={{ width: 18, height: 18 }} />
+              <label htmlFor="has_serial" style={{ fontSize: 13, cursor: "pointer" }}>
+                <b>This item has serial numbers / IMEI</b>
+                <div className="mut" style={{ fontSize: 11.5 }}>
+                  When checked, purchases will prompt to enter serials (optional per bill),
+                  and sales will offer a picker of in-stock serials.</div>
+              </label>
+            </div>
           </div>
           {err && <p className="neg" style={{ fontSize: 13, marginTop: 10 }}>{err}</p>}
           <div style={{ display: "flex", gap: 9, justifyContent: "flex-end", marginTop: 16 }}>
             <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn pri" disabled={pending}>{pending ? "Saving…" : "Save product"}</button>
+            <button className="btn pri" disabled={pending || !!dupe}>
+              {pending ? "Saving…" : "Save product"}</button>
           </div>
         </form>
       </div>
