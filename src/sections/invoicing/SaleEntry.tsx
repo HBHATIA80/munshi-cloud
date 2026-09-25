@@ -180,12 +180,11 @@ export function SaleEntry({ items, parties, homeState }: {
         {isGst && (inter
           ? <span className="chip amb">Inter-state → IGST</span>
           : <span className="chip grn">Intra-state → CGST + SGST</span>)}
-        <span className="mut" style={{ fontSize: 11 }}>
+        <span className="mut kbd-hints" style={{ fontSize: 11 }}>
           <b>F2</b> item · <b>F8</b> line · <b>F6</b> GST · <b>F4</b> save · <b>Alt+1</b> full paid · <b>Alt+2</b> credit</span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 300px",
-        gap: 14, alignItems: "start" }}>
+      <div className="entry-grid">
         {/* ================= LEFT ================= */}
         <div>
           <div className="panel" style={{ marginBottom: 10 }}>
@@ -315,7 +314,7 @@ export function SaleEntry({ items, parties, homeState }: {
         </div>
 
         {/* ================= RIGHT: totals + payment ================= */}
-        <div style={{ position: "sticky", top: 70 }}>
+        <div className="entry-side">
           <div className="panel">
             <div className="ph"><h3>Bill Summary</h3>
               <span className={"chip " + (isGst ? "grn" : "")}>{isGst ? "GST" : "Non-GST"}</span></div>

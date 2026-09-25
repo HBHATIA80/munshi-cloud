@@ -32,7 +32,6 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
   const [paid, setPaid] = useState("");          // blank = full credit
   const [payMode, setPayMode] = useState("cash");
   const [searchRow, setSearchRow] = useState<number | null>(null);
-  // last-5 purchase history per item id
   const [hist, setHist] = useState<Record<string, PU[]>>({});
   const [compare, setCompare] = useState(false);
   const router = useRouter();
@@ -57,7 +56,6 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
       purchaseHistoryAction(need).then(h => setHist(m => ({ ...m, ...h })));
   };
 
-  // add (fetch) or remove (from comparison) an item in the compare panel
   const toggleCompare = (id: string) => {
     if (hist[id]) {
       setHist(m => { const n = { ...m }; delete n[id]; return n; });
@@ -72,7 +70,6 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
     setL(i, { item_id: it.id, name: it.name, unit: it.unit ?? "pc", hsn: it.hsn ?? "",
       rate: it.cost, gst: it.gst, cost: it.cost, qty: 1,
       serials: it.has_serial ? [] : undefined });
-    // fetch purchase history — chip shows last buy before you accept the rate
     loadHist([it.id]);
   };
 
@@ -150,12 +147,11 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
         </div>
         <span className="chip">All rates excl. GST</span>
         <span style={{ flex: 1 }} />
-        <span className="mut" style={{ fontSize: 11 }}>
+        <span className="mut kbd-hints" style={{ fontSize: 11 }}>
           <b>F2</b> item · <b>F8</b> line · <b>F6</b> GST · <b>F4</b> save · <b>Alt+1</b> full paid · <b>Alt+2</b> credit</span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 300px",
-        gap: 14, alignItems: "start" }}>
+      <div className="entry-grid">
         {/* ================= LEFT ================= */}
         <div>
           <div className="panel" style={{ marginBottom: 10 }}>
@@ -281,7 +277,7 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
         </div>
 
         {/* ================= RIGHT: totals + payment ================= */}
-        <div style={{ position: "sticky", top: 70 }}>
+        <div className="entry-side">
           <div className="panel">
             <div className="ph"><h3>Bill Summary</h3>
               <span className={"chip " + (isGst ? "grn" : "")}>{isGst ? "GST" : "Non-GST"}</span></div>

@@ -271,3 +271,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   .t { min-width: 560px; }               /* tables scroll instead of squashing */
   .panel { padding: 14px !important; }
 }
+/* ===== voucher entry layout (sale/purchase) ===== */
+.entry-grid { display: grid; grid-template-columns: minmax(0,1fr) 300px;
+  gap: 14px; align-items: start; }
+.entry-side { position: sticky; top: 70px; }
+
+@media (max-width: 860px) {
+  .entry-grid { grid-template-columns: 1fr; }        /* stack: form above, summary below */
+  .entry-side { position: static; }                   /* no sticky overlap on mobile */
+  .kbd-hints { display: none; }                       /* F-keys are desktop-only */
+  .seg-toggle { flex-wrap: wrap; }
+}
