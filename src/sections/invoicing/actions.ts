@@ -681,7 +681,37 @@ export async function updateMoneyVoucherAction(fd: FormData): Promise<Res> {
     return { ok: true, no: v.no };
   } catch (e: any) { return { error: e.message }; }
 }
-
+/* ================= PURCHASE PRICE INTEL (last 5 bills per item) ================= */
+export async function purchaseHistoryAction(itemIds: string[]) {
+  const s = await requireStaff();
+  const sb = await createClient();
+  if (!itemIds.length) return {} as Record<string, { no: string; date: string;
+    qty: number; rate: number; supplier: string }[]>;
+  const { data: ps } = await sb.from("vouchers")
+    .select("no,date,party_id,lines")
+    .eq("type", "purchase")
+    .order("date", { ascending: false })
+    .limit(200);
+  const partyIds = [...new Set((ps ?? []).map((v: any) => v.party_id).filter(Boolean))];
+  const { data: sups } = partyIds.length
+    ? await sb.from("parties").select("id,name").in("id", partyIds)
+    : { data: [] as any[] };
+  const supMap = new Map((sups ?? []).map((p: any) => [p.id, p.name]));
+  const want = new Set(itemIds);
+  const out: Record<string, { no: string; date: string; qty: number; rate: number; supplier: string }[]> = {};
+  for (const v of (ps ?? []) as any[]) {
+    for (const l of (v.lines ?? []) as any[]) {
+      if (!l.item_id || !want.has(l.item_id)) continue;
+      const arr = out[l.item_id] ?? (out[l.item_id] = []);
+      if (arr.length >= 5) continue;
+      arr.push({ no: v.no, date: v.date, qty: +l.qty, rate: +l.rate,
+        supplier: supMap.get(v.party_id) ?? "Cash" });
+    }
+  }
+  // trim each list to exactly 5 (deduped already by arr.length guard)
+  for (const k of Object.keys(out)) out[k] = out[k].slice(0, 5);
+  return out;
+}
 /* ================= EDIT VOUCHER NUMBER (typo fix only) ================= */
 export async function editNoAction(fd: FormData): Promise<Res> {
   const { s, sb } = await staff();

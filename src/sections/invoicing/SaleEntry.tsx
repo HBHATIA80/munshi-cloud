@@ -1,15 +1,17 @@
 ﻿"use client";
 import { Fragment, useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { saveSaleAction, serialsForItemAction } from "./actions";
+import { saveSaleAction, serialsForItemAction, purchaseHistoryAction } from "./actions";
 import { LiveSearch } from "@/components/LiveSearch";
 import { SerialInput } from "./SerialInput";
+import { LastPurchaseChip, PriceCompare } from "./PriceIntel";
 
 type Item = { hsn: string; id: string; name: string; sku: string; unit: string; gst: number;
   cost: number; pr: number; ps: number; stock: number; has_serial: boolean };
 type Party = { id: string; name: string; type: string; state: string | null };
 type Line = { item_id: string; name: string; unit: string; hsn: string;
   qty: number; rate: number; disc: number; gst: number; cost: number; serials?: string[] };
+type PU = { no: string; date: string; qty: number; rate: number; supplier: string };
 
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const cell: React.CSSProperties = { padding: "4px 6px" };
@@ -34,6 +36,9 @@ export function SaleEntry({ items, parties, homeState }: {
   const [searchRow, setSearchRow] = useState<number | null>(null);
   // in-stock serials per item id — fetched once when a serial-tracked item is picked
   const [serialStock, setSerialStock] = useState<Record<string, string[]>>({});
+  // last-5 purchase history per item id — fetched on pick / when opening the compare panel
+  const [hist, setHist] = useState<Record<string, PU[]>>({});
+  const [compare, setCompare] = useState(false);
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [err, submit, pending] = useActionState(async (_: string | null, fd: FormData) => {
@@ -51,6 +56,22 @@ export function SaleEntry({ items, parties, homeState }: {
   const setL = (i: number, patch: Partial<Line>) =>
     setLines(ls => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
+  // fetch last-5 purchase history for any items not yet loaded
+  const loadHist = (ids: string[]) => {
+    const need = ids.filter(id => id && !hist[id]);
+    if (need.length)
+      purchaseHistoryAction(need).then(h => setHist(m => ({ ...m, ...h })));
+  };
+
+  // add (fetch) or remove (from comparison) an item in the compare panel
+  const toggleCompare = (id: string) => {
+    if (hist[id]) {
+      setHist(m => { const n = { ...m }; delete n[id]; return n; });
+    } else {
+      loadHist([id]);
+    }
+  };
+
   const pickItem = (i: number, id: string) => {
     const it = items.find(x => x.id === id);
     if (!it) { setL(i, { item_id: "", name: "", unit: "pc", hsn: "", rate: 0, cost: 0 }); return; }
@@ -61,6 +82,8 @@ export function SaleEntry({ items, parties, homeState }: {
       serialsForItemAction(it.id).then(list =>
         setSerialStock(m => ({ ...m, [it.id]: (list as any[]).map((r: any) => r.serial) })));
     }
+    // fetch purchase history for the price chip
+    loadHist([it.id]);
   };
 
   const pickParty = (id: string) => {
@@ -226,6 +249,9 @@ export function SaleEntry({ items, parties, homeState }: {
                                   display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                                 <b>{l.name || <span className="mut">Click / F2 to pick item</span>}</b>
                                 {it?.has_serial && <span className="chip blu">S/N</span>}
+                                {it && (hist[it.id]?.length ?? 0) > 0 && (
+                                  <LastPurchaseChip purchases={hist[it.id]}
+                                    onOpen={() => setCompare(true)} />)}
                                 {over && <span className="chip amb">back order — {it!.stock} left</span>}
                                 {it && it.stock <= 0 && <span className="chip red">no stock — sets off on purchase</span>}
                               </div>
@@ -305,6 +331,13 @@ export function SaleEntry({ items, parties, homeState }: {
                 <span><b>Total</b></span>
                 <b style={{ font: "700 22px var(--font-disp)" }}>{inr(total)}</b></div>
 
+              <div style={{ marginTop: 10 }}>
+                <button type="button" className="fchip"
+                  onClick={() => { loadHist(lines.map(l => l.item_id)); setCompare(true); }}>
+                  📊 Compare purchase prices
+                </button>
+              </div>
+
               {serialsIncomplete && (
                 <p className="neg" style={{ fontSize: 12, marginTop: 8 }}>
                   ⚠ Select the serial numbers for tracked items (qty per line) before saving.</p>)}
@@ -344,6 +377,12 @@ export function SaleEntry({ items, parties, homeState }: {
           {err && <p className="neg" style={{ fontSize: 13, marginTop: 10 }}>{err}</p>}
         </div>
       </div>
+
+      {/* purchase price comparison modal */}
+      {compare && (
+        <PriceCompare items={items} byItem={hist} onClose={() => setCompare(false)}
+          onPick={toggleCompare} />
+      )}
     </form>
   );
 }

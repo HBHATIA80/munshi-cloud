@@ -1,15 +1,17 @@
 "use client";
 import { Fragment, useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { savePurchaseAction } from "./actions";
+import { savePurchaseAction, purchaseHistoryAction } from "./actions";
 import { LiveSearch } from "@/components/LiveSearch";
 import { SerialInput } from "./SerialInput";
+import { LastPurchaseChip, PriceCompare } from "./PriceIntel";
 
 type Item = { id: string; name: string; sku?: string; unit?: string; hsn?: string;
   gst: number; cost: number; has_serial: boolean };
 type Sup = { id: string; name: string };
 type Line = { item_id: string; name: string; unit: string; hsn: string;
   qty: number; rate: number; gst: number; cost: number; serials?: string[] };
+type PU = { no: string; date: string; qty: number; rate: number; supplier: string };
 
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const cell: React.CSSProperties = { padding: "4px 6px" };
@@ -30,6 +32,9 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
   const [paid, setPaid] = useState("");          // blank = full credit
   const [payMode, setPayMode] = useState("cash");
   const [searchRow, setSearchRow] = useState<number | null>(null);
+  // last-5 purchase history per item id
+  const [hist, setHist] = useState<Record<string, PU[]>>({});
+  const [compare, setCompare] = useState(false);
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [err, submit, pending] = useActionState(async (_: string | null, fd: FormData) => {
@@ -46,12 +51,29 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
   const setL = (i: number, patch: Partial<Line>) =>
     setLines(ls => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
+  const loadHist = (ids: string[]) => {
+    const need = ids.filter(id => id && !hist[id]);
+    if (need.length)
+      purchaseHistoryAction(need).then(h => setHist(m => ({ ...m, ...h })));
+  };
+
+  // add (fetch) or remove (from comparison) an item in the compare panel
+  const toggleCompare = (id: string) => {
+    if (hist[id]) {
+      setHist(m => { const n = { ...m }; delete n[id]; return n; });
+    } else {
+      loadHist([id]);
+    }
+  };
+
   const pickItem = (i: number, id: string) => {
     const it = items.find(x => x.id === id);
     if (!it) { setL(i, { item_id: "", name: "", unit: "pc", hsn: "", rate: 0, cost: 0 }); return; }
     setL(i, { item_id: it.id, name: it.name, unit: it.unit ?? "pc", hsn: it.hsn ?? "",
       rate: it.cost, gst: it.gst, cost: it.cost, qty: 1,
       serials: it.has_serial ? [] : undefined });
+    // fetch purchase history — chip shows last buy before you accept the rate
+    loadHist([it.id]);
   };
 
   const addLine = (goSearch = false) => {
@@ -176,6 +198,8 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
                     const it = items.find(x => x.id === l.item_id);
                     const tracked = !!it && it.has_serial;
                     const cols = isGst ? 6 : 5;
+                    const last = it ? (hist[it.id]?.[0] ?? null) : null;
+                    const rateHigh = !!last && l.rate > last.rate;
                     return (
                       <Fragment key={i}>
                         <tr>
@@ -190,9 +214,12 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
                             ) : (
                               <div onClick={() => setSearchRow(i)}
                                 style={{ cursor: "pointer", minHeight: 38,
-                                  display: "flex", alignItems: "center", gap: 6 }}>
+                                  display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                                 <b>{l.name || <span className="mut">Click / F2 to pick item</span>}</b>
                                 {tracked && <span className="chip blu">S/N</span>}
+                                {it && (hist[it.id]?.length ?? 0) > 0 && (
+                                  <LastPurchaseChip purchases={hist[it.id]}
+                                    onOpen={() => setCompare(true)} />)}
                               </div>
                             )}
                           </td>
@@ -206,7 +233,11 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
                           <td style={cell}>
                             <input className="inp mono" type="number" min="0" step="0.01" style={{ width: 84 }}
                               value={l.rate} onKeyDown={rowEnter(i)} onFocus={() => setSearchRow(null)}
-                              onChange={e => setL(i, { rate: Math.max(0, +e.target.value || 0) })} /></td>
+                              onChange={e => setL(i, { rate: Math.max(0, +e.target.value || 0) })} />
+                            {rateHigh && (
+                              <div className="neg" style={{ fontSize: 10.5, marginTop: 2 }}>
+                                ↑ last buy {inr(last!.rate)}</div>)}
+                          </td>
                           {isGst && <td style={cell}>
                             <input className="inp mono" type="number" min="0" style={{ width: 54 }}
                               value={l.gst} onKeyDown={rowEnter(i)} onFocus={() => setSearchRow(null)}
@@ -262,6 +293,13 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
                 <span><b>Total payable</b></span>
                 <b style={{ font: "700 22px var(--font-disp)" }}>{inr(total)}</b></div>
 
+              <div style={{ marginTop: 10 }}>
+                <button type="button" className="fchip"
+                  onClick={() => { loadHist(lines.map(l => l.item_id)); setCompare(true); }}>
+                  📊 Compare purchase prices
+                </button>
+              </div>
+
               {/* ---- payment made block ---- */}
               <div style={{ marginTop: 12, borderTop: "1px dashed var(--line)", paddingTop: 10 }}>
                 <label className="fl">Amount paid now</label>
@@ -299,6 +337,12 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
           {err && <p className="neg" style={{ fontSize: 13, marginTop: 10 }}>{err}</p>}
         </div>
       </div>
+
+      {/* purchase price comparison modal */}
+      {compare && (
+        <PriceCompare items={items} byItem={hist} onClose={() => setCompare(false)}
+          onPick={toggleCompare} />
+      )}
     </form>
   );
 }
