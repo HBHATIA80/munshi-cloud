@@ -291,12 +291,12 @@ export async function deletePartyAction(id: string): Promise<{ error?: string }>
   revalidatePath("/erp/parties");
   return {};
 }
-/* ================= BULK ITEM CREATE (quick add many) ================= */
+/* ================= BULK ITEM CREATE (quick add many — per-row taxonomy) ================= */
 export async function saveBulkItemsAction(payload: {
-  cat_id: string | null; sub_id: string | null; brand_id: string | null;
-  unit: string; gst: number; hsn: string; low: number; has_serial: boolean;
-  rows: { name: string; sku: string; cost: number; pr: number; ps: number;
-    mrp: number; stock: number }[];
+  unit: string; gst: number; hsn: string; low: number;
+  rows: { name: string; sku: string; cat_id: string | null; sub_id: string | null;
+    brand_id: string | null; cost: number; pr: number; ps: number;
+    mrp: number; stock: number; has_serial: boolean }[];
 }): Promise<{ created?: number; skipped?: string[]; error?: string }> {
   const { s, sb } = await staffAndTenant();
   if (!s.tenantId) return { error: "No tenant on session." };
@@ -305,25 +305,24 @@ export async function saveBulkItemsAction(payload: {
     .filter(r => r.name);
   if (!rows.length) return { error: "Enter at least one item name." };
 
-  // case-insensitive duplicates: against DB (same category scope) + within the batch
-  let q = sb.from("items").select("name").eq("tenant_id", s.tenantId);
-  if (payload.cat_id) q = q.eq("cat_id", payload.cat_id);
-  const { data: existRows } = await q;
-  const taken = new Set((existRows ?? []).map((r: any) => String(r.name).trim().toLowerCase()));
+  // case-insensitive dupes: against existing items (per-row category scope) + within batch
+  const { data: existRows } = await sb.from("items")
+    .select("name,cat_id").eq("tenant_id", s.tenantId);
+  const taken = new Set((existRows ?? []).map((r: any) =>
+    String(r.name).trim().toLowerCase() + "|" + (r.cat_id ?? "")));
   const toInsert: Record<string, unknown>[] = [];
   const skipped: string[] = [];
   for (const r of rows) {
-    const key = r.name.toLowerCase();
+    const key = r.name.toLowerCase() + "|" + (r.cat_id ?? "");
     if (taken.has(key)) { skipped.push(r.name); continue; }
-    taken.add(key);                                   // also blocks dupes inside the batch
+    taken.add(key);
     toInsert.push({
       tenant_id: s.tenantId,
       name: r.name, sku: r.sku ?? "", unit: payload.unit || "pc",
-      cat_id: payload.cat_id, sub_id: payload.sub_id, brand_id: payload.brand_id,
+      cat_id: r.cat_id, sub_id: r.sub_id, brand_id: r.brand_id,
       hsn: payload.hsn ?? "", gst: +payload.gst || 0,
       cost: +r.cost || 0, pr: +r.pr || 0, ps: +r.ps || 0, mrp: +r.mrp || 0,
-      low: +payload.low || 5, has_serial: !!payload.has_serial,
-      stock: +r.stock || 0,
+      low: +payload.low || 5, has_serial: !!r.has_serial, stock: +r.stock || 0,
     });
   }
   if (toInsert.length) {

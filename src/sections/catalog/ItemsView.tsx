@@ -89,8 +89,10 @@ export function ItemsView({ items, cats, brands }: { items: Item[]; cats: Cat[];
             cats.find(c => c.id === i.cat_id)?.name ?? "", brands.find(b => b.id === i.brand_id)?.name ?? "",
             i.hsn, i.gst, i.cost, i.pr, i.ps, i.mrp, i.stock, i.low, i.has_serial ? "yes" : ""]),
         ])}>⭳ CSV</button>
+        <button className="btn" onClick={() => setBulk(true)}>⚡ Quick add many</button>
         <button className="btn pri" onClick={() => setEdit("new")}>＋ Add product</button>
-      </div>        <button className="btn" onClick={() => setBulk(true)}>⚡ Quick add many</button>
+      </div>{/* ← THIS closing div was missing in your version */}
+
       <div className="panel"><div className="tblw"><table className="t">
         <thead><tr><th>Product</th><th>Category</th><th>Brand</th><th className="num">GST</th>
           <th className="num">Cost (excl)</th><th className="num">Retail (excl)</th>
@@ -149,7 +151,7 @@ export function ItemsView({ items, cats, brands }: { items: Item[]; cats: Cat[];
       {edit && <ItemForm item={edit === "new" ? null : edit} cats={cats} brands={brands}
         allItems={items}
         onClose={() => { setEdit(null); router.refresh(); }} />}
-              {bulk && <BulkItemsForm cats={cats} brands={brands}
+      {bulk && <BulkItemsForm cats={cats} brands={brands}
         onClose={() => setBulk(false)} onSaved={() => { setBulk(false); router.refresh(); }} />}
     </>
   );
