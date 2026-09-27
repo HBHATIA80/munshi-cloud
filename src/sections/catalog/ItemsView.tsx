@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { saveItemAction, deleteItemAction, saveCatAction, saveSubAction, saveBrandAction } from "./actions";
 import { LiveSearch } from "@/components/LiveSearch";
 import { showAlert, showConfirm } from "@/components/Alert";
+import { BulkItemsForm } from "./BulkItemsForm";
 
 type Cat = { id: string; name: string; emoji: string; parent_id: string | null };
 type Brand = { id: string; name: string };
@@ -52,6 +53,7 @@ export function ItemsView({ items, cats, brands }: { items: Item[]; cats: Cat[];
   const [size, setSize] = useState(15);
   const [page, setPage] = useState(1);
   const [edit, setEdit] = useState<Item | "new" | null>(null);
+  const [bulk, setBulk] = useState(false);
   const router = useRouter();
 
   const list = items.filter(i =>
@@ -88,7 +90,7 @@ export function ItemsView({ items, cats, brands }: { items: Item[]; cats: Cat[];
             i.hsn, i.gst, i.cost, i.pr, i.ps, i.mrp, i.stock, i.low, i.has_serial ? "yes" : ""]),
         ])}>⭳ CSV</button>
         <button className="btn pri" onClick={() => setEdit("new")}>＋ Add product</button>
-      </div>
+      </div>        <button className="btn" onClick={() => setBulk(true)}>⚡ Quick add many</button>
       <div className="panel"><div className="tblw"><table className="t">
         <thead><tr><th>Product</th><th>Category</th><th>Brand</th><th className="num">GST</th>
           <th className="num">Cost (excl)</th><th className="num">Retail (excl)</th>
@@ -147,6 +149,8 @@ export function ItemsView({ items, cats, brands }: { items: Item[]; cats: Cat[];
       {edit && <ItemForm item={edit === "new" ? null : edit} cats={cats} brands={brands}
         allItems={items}
         onClose={() => { setEdit(null); router.refresh(); }} />}
+              {bulk && <BulkItemsForm cats={cats} brands={brands}
+        onClose={() => setBulk(false)} onSaved={() => { setBulk(false); router.refresh(); }} />}
     </>
   );
 }
