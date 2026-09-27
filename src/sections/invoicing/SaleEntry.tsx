@@ -5,6 +5,7 @@ import { saveSaleAction, serialsForItemAction, purchaseHistoryAction } from "./a
 import { LiveSearch } from "@/components/LiveSearch";
 import { SerialInput } from "./SerialInput";
 import { LastPurchaseChip, PriceCompare } from "./PriceIntel";
+import { ConfirmBill } from "./ConfirmBill";
 
 type Item = { hsn: string; id: string; name: string; sku: string; unit: string; gst: number;
   cost: number; pr: number; ps: number; stock: number; has_serial: boolean };
@@ -34,11 +35,10 @@ export function SaleEntry({ items, parties, homeState }: {
   const [paid, setPaid] = useState("");        // blank = credit (nothing received)
   const [payMode, setPayMode] = useState("cash");
   const [searchRow, setSearchRow] = useState<number | null>(null);
-  // in-stock serials per item id — fetched once when a serial-tracked item is picked
   const [serialStock, setSerialStock] = useState<Record<string, string[]>>({});
-  // last-5 purchase history per item id — fetched on pick / when opening the compare panel
   const [hist, setHist] = useState<Record<string, PU[]>>({});
   const [compare, setCompare] = useState(false);
+  const [confirm, setConfirm] = useState(false);
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [err, submit, pending] = useActionState(async (_: string | null, fd: FormData) => {
@@ -56,14 +56,12 @@ export function SaleEntry({ items, parties, homeState }: {
   const setL = (i: number, patch: Partial<Line>) =>
     setLines(ls => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
-  // fetch last-5 purchase history for any items not yet loaded
   const loadHist = (ids: string[]) => {
     const need = ids.filter(id => id && !hist[id]);
     if (need.length)
       purchaseHistoryAction(need).then(h => setHist(m => ({ ...m, ...h })));
   };
 
-  // add (fetch) or remove (from comparison) an item in the compare panel
   const toggleCompare = (id: string) => {
     if (hist[id]) {
       setHist(m => { const n = { ...m }; delete n[id]; return n; });
@@ -77,12 +75,10 @@ export function SaleEntry({ items, parties, homeState }: {
     if (!it) { setL(i, { item_id: "", name: "", unit: "pc", hsn: "", rate: 0, cost: 0 }); return; }
     setL(i, { item_id: it.id, name: it.name, unit: it.unit, hsn: it.hsn ?? "", gst: it.gst,
       rate: priceOf(it), cost: it.cost, qty: 1, disc: 0, serials: it.has_serial ? [] : undefined });
-    // fetch in-stock serials once per tracked item (picker mode)
     if (it.has_serial && !serialStock[it.id]) {
       serialsForItemAction(it.id).then(list =>
         setSerialStock(m => ({ ...m, [it.id]: (list as any[]).map((r: any) => r.serial) })));
     }
-    // fetch purchase history for the price chip
     loadHist([it.id]);
   };
 
@@ -118,8 +114,8 @@ export function SaleEntry({ items, parties, homeState }: {
   const total = Math.round(netT + tax);
   const paidN = Math.max(0, Math.min(+paid || 0, total));
   const due = total - paidN;
+  const qtyTotal = lines.reduce((t, l) => t + (l.item_id ? l.qty : 0), 0);
 
-  // serial guard: tracked item with in-stock serials must have exactly qty selected
   const serialsIncomplete = lines.some(l => {
     const it = items.find(x => x.id === l.item_id);
     return !!it && it.has_serial && (serialStock[l.item_id]?.length ?? 0) > 0
@@ -137,15 +133,14 @@ export function SaleEntry({ items, parties, homeState }: {
           inputs[inputs.length - 1]?.focus();
         }, 40);
       }
-      if (e.key === "F4") { e.preventDefault(); formRefEl.current?.requestSubmit(); }
+      if (e.key === "F4") { e.preventDefault(); setConfirm(true); }
       if (e.key === "F8") { e.preventDefault(); addLine(true); }
       if (e.key === "F6") { e.preventDefault(); setIsGst(g => !g); }
-      if (e.altKey && e.key === "1") {                       // Alt+1 → full paid, cash
-        e.preventDefault(); setPaid(String(total)); setPayMode("cash");
-        formRefEl.current?.requestSubmit();
+      if (e.altKey && e.key === "1") {
+        e.preventDefault(); setPaid(String(total)); setPayMode("cash"); setConfirm(true);
       }
-      if (e.altKey && e.key === "2") {                       // Alt+2 → credit
-        e.preventDefault(); setPaid("0"); formRefEl.current?.requestSubmit();
+      if (e.altKey && e.key === "2") {
+        e.preventDefault(); setPaid("0"); setConfirm(true);
       }
     };
     window.addEventListener("keydown", h);
@@ -281,7 +276,6 @@ export function SaleEntry({ items, parties, homeState }: {
                             <button type="button" className="ib" title="Remove"
                               onClick={() => rmLine(i)}>✕</button></td>
                         </tr>
-                        {/* serial picker — tracked items with in-stock serials */}
                         {tracked && (
                           <tr>
                             <td colSpan={cols} style={{ ...cell, background: "#fbfaf4" }}>
@@ -341,7 +335,6 @@ export function SaleEntry({ items, parties, homeState }: {
                 <p className="neg" style={{ fontSize: 12, marginTop: 8 }}>
                   ⚠ Select the serial numbers for tracked items (qty per line) before saving.</p>)}
 
-              {/* ---- payment received block ---- */}
               <div style={{ marginTop: 12, borderTop: "1px dashed var(--line)", paddingTop: 10 }}>
                 <label className="fl">Amount received now</label>
                 <input className="inp mono" type="number" min="0" max={total} step="0.01"
@@ -365,8 +358,9 @@ export function SaleEntry({ items, parties, homeState }: {
             </div>
             <div className="pb" style={{ borderTop: "1px solid var(--line)", display: "flex",
               flexDirection: "column", gap: 8 }}>
-              <button className="btn grn" style={{ justifyContent: "center" }}
-                disabled={pending || !lines.some(l => l.item_id) || serialsIncomplete}>
+              <button type="button" className="btn grn" style={{ justifyContent: "center" }}
+                disabled={pending || !lines.some(l => l.item_id) || serialsIncomplete}
+                onClick={() => setConfirm(true)}>
                 💾 Save Invoice (F4)</button>
               <span className="mut" style={{ fontSize: 11 }}>
                 Received {paidN > 0 ? inr(paidN) + " via " + payMode.toUpperCase() : "nothing yet — credit bill"}
@@ -377,10 +371,18 @@ export function SaleEntry({ items, parties, homeState }: {
         </div>
       </div>
 
-      {/* purchase price comparison modal */}
       {compare && (
         <PriceCompare items={items} byItem={hist} onClose={() => setCompare(false)}
           onPick={toggleCompare} />
+      )}
+      {confirm && (
+        <ConfirmBill kind="sale"
+          partyLabel="Party" partyName={party?.name ?? null}
+          itemsCount={lines.filter(l => l.item_id).length} qtyTotal={qtyTotal}
+          taxable={taxable} gst={tax} inter={inter} total={total}
+          paidN={paidN} due={due} payMode={payMode} saving={pending}
+          onConfirm={() => formRefEl.current?.requestSubmit()}
+          onCancel={() => setConfirm(false)} />
       )}
     </form>
   );

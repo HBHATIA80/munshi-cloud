@@ -5,6 +5,7 @@ import { savePurchaseAction, purchaseHistoryAction } from "./actions";
 import { LiveSearch } from "@/components/LiveSearch";
 import { SerialInput } from "./SerialInput";
 import { LastPurchaseChip, PriceCompare } from "./PriceIntel";
+import { ConfirmBill } from "./ConfirmBill";
 
 type Item = { id: string; name: string; sku?: string; unit?: string; hsn?: string;
   gst: number; cost: number; has_serial: boolean };
@@ -34,6 +35,7 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
   const [searchRow, setSearchRow] = useState<number | null>(null);
   const [hist, setHist] = useState<Record<string, PU[]>>({});
   const [compare, setCompare] = useState(false);
+  const [confirm, setConfirm] = useState(false);
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [err, submit, pending] = useActionState(async (_: string | null, fd: FormData) => {
@@ -86,14 +88,12 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
   };
   const rmLine = (i: number) => setLines(ls => ls.filter((_, j) => j !== i));
 
-  /* rates are ALWAYS exclusive of GST:
-     GST ON  → GST added on top, total = amount + GST (input credit claimed)
-     GST OFF → no tax at all, total = amount (full rate to Stock)          */
   const taxable = lines.reduce((t, l) => t + l.qty * l.rate, 0);
   const tax = isGst ? lines.reduce((t, l) => t + l.qty * l.rate * l.gst / 100, 0) : 0;
   const total = Math.round(isGst ? taxable + tax : taxable);
   const paidN = Math.max(0, Math.min(+paid || 0, total));
   const due = total - paidN;
+  const qtyTotal = lines.reduce((t, l) => t + (l.item_id ? l.qty : 0), 0);
 
   const formRefEl = formRef as React.RefObject<HTMLFormElement>;
   useEffect(() => {
@@ -106,15 +106,14 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
           inputs[inputs.length - 1]?.focus();
         }, 40);
       }
-      if (e.key === "F4") { e.preventDefault(); formRefEl.current?.requestSubmit(); }
+      if (e.key === "F4") { e.preventDefault(); setConfirm(true); }
       if (e.key === "F8") { e.preventDefault(); addLine(true); }
       if (e.key === "F6") { e.preventDefault(); setIsGst(g => !g); }
-      if (e.altKey && e.key === "1") {                       // Alt+1 → full paid, cash
-        e.preventDefault(); setPaid(String(total)); setPayMode("cash");
-        formRefEl.current?.requestSubmit();
+      if (e.altKey && e.key === "1") {
+        e.preventDefault(); setPaid(String(total)); setPayMode("cash"); setConfirm(true);
       }
-      if (e.altKey && e.key === "2") {                       // Alt+2 → credit
-        e.preventDefault(); setPaid("0"); formRefEl.current?.requestSubmit();
+      if (e.altKey && e.key === "2") {
+        e.preventDefault(); setPaid("0"); setConfirm(true);
       }
     };
     window.addEventListener("keydown", h);
@@ -177,7 +176,6 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
             </div></div>
           </div>
 
-          {/* ---- ONE-ROW-PER-ITEM grid (back-orders allowed) ---- */}
           <div className="panel">
             <div className="entry-tblw">
               <table className="t" style={{ minWidth: 560 }}>
@@ -244,7 +242,6 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
                             <button type="button" className="ib" title="Remove"
                               onClick={() => rmLine(i)}>✕</button></td>
                         </tr>
-                        {/* serial entry — tracked items only, OPTIONAL (skip = not tracked for this bill) */}
                         {tracked && (
                           <tr>
                             <td colSpan={cols} style={{ ...cell, background: "#fbfaf4" }}>
@@ -296,7 +293,6 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
                 </button>
               </div>
 
-              {/* ---- payment made block ---- */}
               <div style={{ marginTop: 12, borderTop: "1px dashed var(--line)", paddingTop: 10 }}>
                 <label className="fl">Amount paid now</label>
                 <input className="inp mono" type="number" min="0" max={total} step="0.01"
@@ -320,8 +316,9 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
             </div>
             <div className="pb" style={{ borderTop: "1px solid var(--line)", display: "flex",
               flexDirection: "column", gap: 8 }}>
-              <button className="btn grn" style={{ justifyContent: "center" }}
-                disabled={pending || !lines.some(l => l.item_id)}>
+              <button type="button" className="btn grn" style={{ justifyContent: "center" }}
+                disabled={pending || !lines.some(l => l.item_id)}
+                onClick={() => setConfirm(true)}>
                 💾 Save Purchase Bill (F4)</button>
               <span className="mut" style={{ fontSize: 11 }}>
                 {paidN > 0 ? "Paid " + inr(paidN) + " via " + payMode.toUpperCase()
@@ -334,10 +331,18 @@ export function PurchEntry({ items, suppliers }: { items: Item[]; suppliers: Sup
         </div>
       </div>
 
-      {/* purchase price comparison modal */}
       {compare && (
         <PriceCompare items={items} byItem={hist} onClose={() => setCompare(false)}
           onPick={toggleCompare} />
+      )}
+      {confirm && (
+        <ConfirmBill kind="purchase"
+          partyLabel="Supplier" partyName={suppliers.find(s => s.id === supId)?.name ?? null}
+          itemsCount={lines.filter(l => l.item_id).length} qtyTotal={qtyTotal}
+          taxable={taxable} gst={tax} inter={false} total={total}
+          paidN={paidN} due={due} payMode={payMode} saving={pending}
+          onConfirm={() => formRefEl.current?.requestSubmit()}
+          onCancel={() => setConfirm(false)} />
       )}
     </form>
   );
