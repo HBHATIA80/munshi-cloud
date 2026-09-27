@@ -483,6 +483,7 @@ export async function fetchVoucherByIdAction(fd: FormData) {
 }
 
 /* ================= SERIAL NUMBERS ================= */
+/** in-stock serials for a picker (sale forms) */
 export async function serialsForItemAction(itemId: string) {
   const s = await requireStaff();
   const sb = await createClient();
@@ -492,6 +493,7 @@ export async function serialsForItemAction(itemId: string) {
   return data ?? [];
 }
 
+/** manual add (old stock, corrections) */
 export async function addSerialsAction(fd: FormData): Promise<Res> {
   const s = await requireStaff();
   if (!s.tenantId) return { error: "No tenant on session." };
@@ -507,6 +509,63 @@ export async function addSerialsAction(fd: FormData): Promise<Res> {
     return { error: error.message };
   }
   return { ok: true } as any;
+}
+
+/* ================= PURCHASE PRICE INTEL (batch: last 5 bills per item — entry forms) ================= */
+export async function purchaseHistoryAction(itemIds: string[]) {
+  const s = await requireStaff();
+  const sb = await createClient();
+  if (!itemIds.length) return {} as Record<string, { no: string; date: string;
+    qty: number; rate: number; supplier: string }[]>;
+  const { data: ps } = await sb.from("vouchers")
+    .select("no,date,party_id,lines")
+    .eq("type", "purchase")
+    .order("date", { ascending: false })
+    .limit(200);
+  const partyIds = [...new Set((ps ?? []).map((v: any) => v.party_id).filter(Boolean))];
+  const { data: sups } = partyIds.length
+    ? await sb.from("parties").select("id,name").in("id", partyIds)
+    : { data: [] as any[] };
+  const supMap = new Map((sups ?? []).map((p: any) => [p.id, p.name]));
+  const want = new Set(itemIds);
+  const out: Record<string, { no: string; date: string; qty: number; rate: number; supplier: string }[]> = {};
+  for (const v of (ps ?? []) as any[]) {
+    for (const l of (v.lines ?? []) as any[]) {
+      if (!l.item_id || !want.has(l.item_id)) continue;
+      const arr = out[l.item_id] ?? (out[l.item_id] = []);
+      if (arr.length >= 5) continue;
+      arr.push({ no: v.no, date: v.date, qty: +l.qty, rate: +l.rate,
+        supplier: supMap.get(v.party_id) ?? "Cash" });
+    }
+  }
+  for (const k of Object.keys(out)) out[k] = out[k].slice(0, 5);
+  return out;
+}
+
+/* ================= PURCHASE HISTORY FOR ONE ITEM (on-demand, last 5 — price intel page) ================= */
+export async function itemPurchaseHistoryAction(itemId: string) {
+  const s = await requireStaff();
+  const sb = await createClient();
+  const { data: ps } = await sb.from("vouchers")
+    .select("no,date,party_id,lines")
+    .eq("type", "purchase")
+    .order("date", { ascending: false })
+    .limit(300);
+  let supplier = "Cash";
+  const out: { no: string; date: string; qty: number; rate: number; supplier: string }[] = [];
+  for (const v of (ps ?? []) as any[]) {
+    if (v.party_id) {
+      const { data: p } = await sb.from("parties").select("name").eq("id", v.party_id).single();
+      supplier = p?.name ?? "Cash";
+    }
+    for (const l of (v.lines ?? []) as any[]) {
+      if (l.item_id !== itemId) continue;
+      out.push({ no: v.no, date: v.date, qty: +l.qty, rate: +l.rate, supplier });
+      if (out.length >= 5) break;
+    }
+    if (out.length >= 5) break;
+  }
+  return out;
 }
 
 /* ================= ONLINE ORDERS ================= */
@@ -574,6 +633,7 @@ export async function recordOrderPaymentAction(orderId: string, amount: number, 
 
 /* ================= PARTY-TO-PARTY JOURNAL ================= */
 /* Custom date + note from the form; note (or auto fallback) goes on BOTH legs. */
+/* Convention: -A (From/payer) = CREDIT, -B (To/receiver) = DEBIT (rendered in books.ts). */
 export async function partyJournalAction(fd: FormData): Promise<Res> {
   const s = await requireStaff();
   if (!s.tenantId) return { error: "No tenant on session." };
@@ -681,37 +741,7 @@ export async function updateMoneyVoucherAction(fd: FormData): Promise<Res> {
     return { ok: true, no: v.no };
   } catch (e: any) { return { error: e.message }; }
 }
-/* ================= PURCHASE PRICE INTEL (last 5 bills per item) ================= */
-export async function purchaseHistoryAction(itemIds: string[]) {
-  const s = await requireStaff();
-  const sb = await createClient();
-  if (!itemIds.length) return {} as Record<string, { no: string; date: string;
-    qty: number; rate: number; supplier: string }[]>;
-  const { data: ps } = await sb.from("vouchers")
-    .select("no,date,party_id,lines")
-    .eq("type", "purchase")
-    .order("date", { ascending: false })
-    .limit(200);
-  const partyIds = [...new Set((ps ?? []).map((v: any) => v.party_id).filter(Boolean))];
-  const { data: sups } = partyIds.length
-    ? await sb.from("parties").select("id,name").in("id", partyIds)
-    : { data: [] as any[] };
-  const supMap = new Map((sups ?? []).map((p: any) => [p.id, p.name]));
-  const want = new Set(itemIds);
-  const out: Record<string, { no: string; date: string; qty: number; rate: number; supplier: string }[]> = {};
-  for (const v of (ps ?? []) as any[]) {
-    for (const l of (v.lines ?? []) as any[]) {
-      if (!l.item_id || !want.has(l.item_id)) continue;
-      const arr = out[l.item_id] ?? (out[l.item_id] = []);
-      if (arr.length >= 5) continue;
-      arr.push({ no: v.no, date: v.date, qty: +l.qty, rate: +l.rate,
-        supplier: supMap.get(v.party_id) ?? "Cash" });
-    }
-  }
-  // trim each list to exactly 5 (deduped already by arr.length guard)
-  for (const k of Object.keys(out)) out[k] = out[k].slice(0, 5);
-  return out;
-}
+
 /* ================= EDIT VOUCHER NUMBER (typo fix only) ================= */
 export async function editNoAction(fd: FormData): Promise<Res> {
   const { s, sb } = await staff();
