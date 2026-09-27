@@ -6,10 +6,11 @@ import { setActiveTenantAction } from "@/sections/auth/actions";
 import { NotifBell } from "@/components/NotifBell";
 
 const NAV = [
-  { sec: "Daily", items: [
+    { sec: "Daily", items: [
     { href: "/erp", label: "Dashboard", icon: "◧" },
     { href: "/erp/orders", label: "Online Orders", icon: "✉" },
     { href: "/erp/daybook", label: "Day Book", icon: "▤" },
+    { href: "/erp/priceintel", label: "Purchase Comparison", icon: "📊" },
   ]},
   { sec: "Sales", items: [
     { href: "/erp/sale", label: "New Invoice", icon: "＋" },
