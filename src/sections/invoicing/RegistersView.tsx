@@ -2,8 +2,10 @@
 
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { deleteVoucherAction, getVoucherAction, editNoAction } from "./actions";
 import { EditVoucher } from "./EditVoucher";
+import { UiModal } from "@/components/UiModal";
 
 /* ================= types & helpers ================= */
 
@@ -60,8 +62,8 @@ function downloadCsv(name: string, rows: (string | number)[][]) {
 
 /* ================= register table ================= */
 
-export function RegistersView({ rows, kind, editableNo }: {
-  rows: Row[]; kind: "sale" | "purchase"; editableNo?: boolean;
+export function RegistersView({ rows, kind, editableNo, postedNo }: {
+  rows: Row[]; kind: "sale" | "purchase"; editableNo?: boolean; postedNo?: string;
 }) {
   const [viewId, setViewId] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
@@ -70,6 +72,12 @@ export function RegistersView({ rows, kind, editableNo }: {
   const [q, setQ] = useState("");
   const [size, setSize] = useState(15);
   const [page, setPage] = useState(1);
+  const [delTarget, setDelTarget] = useState<{ id: string; no: string } | null>(null);
+  const [delErr, setDelErr] = useState("");
+  const [posted, setPosted] = useState(postedNo ?? "");
+  const router = useRouter();
+
+  useEffect(() => { if (postedNo) setPosted(postedNo); }, [postedNo]);
 
   const ql = q.trim().toLowerCase();
   const filtered = ql
@@ -80,14 +88,36 @@ export function RegistersView({ rows, kind, editableNo }: {
   const view = filtered.slice((cur - 1) * size, cur * size);
 
   const del = (id: string, no: string) => start(async () => {
-    if (!window.confirm(`Delete ${no}? Stock reverses automatically and ledgers update.`)) return;
+    setDelTarget(null);
     const r = await deleteVoucherAction(id);
-    if (r.error) window.alert("Delete failed: " + r.error);
-    else location.reload();
+    if (r.error) setDelErr(r.error);
+    else router.refresh();
   });
+
+  const kindLabel = kind === "sale" ? "Invoice" : "Purchase bill";
 
   return (
     <>
+      {/* success popup after posting (page passes ?posted=) */}
+      <UiModal open={!!posted} kind="success"
+        title={`${kindLabel} ${posted} saved`}
+        message={"Stock and party ledgers have been updated automatically.\nYou can view or edit it from the register below."}
+        confirmLabel="Great" onClose={() => { setPosted(""); }} />
+
+      {/* delete confirmation */}
+      <UiModal open={!!delTarget} kind="danger"
+        title={`Delete ${delTarget?.no ?? ""}?`}
+        message="Stock reverses automatically and party ledgers update. This cannot be undone."
+        confirmLabel="Yes, delete" cancelLabel="Cancel"
+        onConfirm={() => delTarget && del(delTarget.id, delTarget.no)}
+        onClose={() => setDelTarget(null)} />
+
+      {/* delete error */}
+      <UiModal open={!!delErr} kind="danger"
+        title="Delete failed"
+        message={delErr}
+        confirmLabel="OK" onClose={() => setDelErr("")} />
+
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8,
         marginBottom: 10, flexWrap: "wrap" }}>
         <input className="inp" placeholder="Search no / party…" value={q} style={{ maxWidth: 200 }}
@@ -146,7 +176,7 @@ export function RegistersView({ rows, kind, editableNo }: {
                       <button className="ib" title="View" onClick={() => setViewId(r.id)}>👁</button>
                       <button className="ib" title="Edit" onClick={() => setEditId(r.id)}>✎</button>
                       <button className="ib" title="Delete" disabled={pending}
-                        onClick={() => del(r.id, r.no)}>🗑</button>
+                        onClick={() => setDelTarget({ id: r.id, no: r.no })}>🗑</button>
                     </td>
                   </tr>
                 );
@@ -349,6 +379,12 @@ export function VoucherModal({ id, onClose }: { id: string; onClose: () => void 
           </table>
         </div>
       )}
+
+      {/* serials on lines (if captured) */}
+      {vLines.some((l: any) => l.serials?.length) && (
+        <p className="mut" style={{ fontSize: 11.5, marginTop: 8 }}>
+          Serials: {vLines.flatMap((l: any) => l.serials ?? []).join(", ")}
+        </p>)}
 
       {/* totals */}
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>

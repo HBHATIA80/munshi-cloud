@@ -14,10 +14,11 @@ function rangeFor(preset: string): { from: string; to: string } {
 }
 
 export default async function PurchRegPage({ searchParams }:
-  { searchParams: Promise<{ page?: string; range?: string; from?: string; to?: string }> }) {
+  { searchParams: Promise<{ page?: string; range?: string; from?: string; to?: string; posted?: string }> }) {
   await requireStaff();
   const sp = await searchParams;
-    const pg = Math.max(1, +(sp.page ?? 1) || 1);
+  const posted = sp.posted ?? "";
+  const pg = Math.max(1, +(sp.page ?? 1) || 1);
   const preset = sp.range || "30";
   const { from, to } = preset === "custom" && sp.from
     ? { from: sp.from, to: sp.to || new Date().toISOString().slice(0, 10) }
@@ -88,7 +89,7 @@ export default async function PurchRegPage({ searchParams }:
         {pg < pages && <a className="btn sm" href={qs({ page: String(pg + 1) })}>Next →</a>}
       </div>
 
-      <RegistersView rows={rows} kind="purchase" editableNo />
+      <RegistersView rows={rows} kind="purchase" editableNo postedNo={posted} />
     </>
   );
 }
