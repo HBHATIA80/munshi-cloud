@@ -13,7 +13,8 @@ const dow = (d: string) => {
 };
 
 export default async function LedgerPage({ searchParams }:
-  { searchParams: Promise<{ p?: string; from?: string; to?: string; q?: string; size?: string; pg?: string }> }) {
+  { searchParams: Promise<{ p?: string; from?: string; to?: string; q?: string;
+    size?: string; pg?: string; sort?: string; dir?: string }> }) {
   await requireStaff();
   const sp = await searchParams;
   const p = sp.p;
@@ -22,6 +23,9 @@ export default async function LedgerPage({ searchParams }:
   const q = (sp.q || "").trim();
   const size = Math.min(500, Math.max(10, +(sp.size || 25) || 25));
   const pg = Math.max(1, +(sp.pg || 1) || 1);
+  // default: newest first
+  const sort = (["date", "dr", "cr"].includes(sp.sort || "") ? sp.sort : "date")!;
+  const dir = (sp.dir === "asc" ? "asc" : "desc")!;
 
   const sb = await createClient();
   const [{ data: parties }, { data: vs }] = await Promise.all([
@@ -70,27 +74,41 @@ export default async function LedgerPage({ searchParams }:
     return true;
   });
 
-  // running balance starts from the true carried balance when a From date hides earlier rows
+  // ── sorting ──
+  const signed = (r: typeof filtered[number]) => (r.dr || 0) - (r.cr || 0);
+  const sorted = [...filtered].sort((a, b) => {
+    let c = 0;
+    if (sort === "date") c = a.date.localeCompare(b.date) || a.no.localeCompare(b.no);
+    else if (sort === "dr") c = (a.dr || 0) - (b.dr || 0);
+    else if (sort === "cr") c = (a.cr || 0) - (b.cr || 0);
+    return dir === "asc" ? c : -c;
+  });
+
+  // running balance: computed in the SORTED order (chronology is a view choice)
   const opening = cur?.open || 0;
   const beforeSum = from
     ? all.filter(r => r.date < from).reduce((t, r) => t + r.dr - r.cr, 0)
     : 0;
   const startBal = Math.round((opening + beforeSum) * 100) / 100;
+  const runBalances = sorted.map((_, idx) => {
+    let run = startBal;
+    for (let k = 0; k <= idx; k++) run = Math.round((run + sorted[k].dr - sorted[k].cr) * 100) / 100;
+    return run;
+  });
 
   // pagination window
-  const pages = Math.max(1, Math.ceil(filtered.length / size));
+  const pages = Math.max(1, Math.ceil(sorted.length / size));
   const curPg = Math.min(pg, pages);
-  const view = filtered.slice((curPg - 1) * size, curPg * size);
+  const view = sorted.slice((curPg - 1) * size, curPg * size);
 
-  // closing = true lifetime balance (ignores filters) — badge stays truthful
+  // closing = true lifetime balance (order-independent)
   const bal = cur
     ? Math.round(((cur.open || 0)
         + all.reduce((t, r) => t + r.dr - r.cr, 0)) * 100) / 100
     : 0;
 
-  // query-string helper preserving filters across pagination links
   const qlink = (over: Record<string, string | number | undefined>) => {
-    const params = new URLSearchParams({ p: cur?.id ?? "" });
+    const params = new URLSearchParams({ p: cur?.id ?? "", sort, dir });
     if (from) params.set("from", from);
     if (to) params.set("to", to);
     if (q) params.set("q", q);
@@ -101,12 +119,14 @@ export default async function LedgerPage({ searchParams }:
     return `/erp/ledger?${params.toString()}`;
   };
 
-  // running balances for the filtered set, computed once
-  const runBalances = filtered.map((_, idx) => {
-    let run = startBal;
-    for (let k = 0; k <= idx; k++) run = Math.round((run + filtered[k].dr - filtered[k].cr) * 100) / 100;
-    return run;
-  });
+  // header link: click toggles direction; active column gets the arrow
+  const sortLink = (key: "date" | "dr" | "cr", label: string) => {
+    const active = sort === key;
+    const nextDir = active && dir === "desc" ? "asc" : "desc";
+    const arrow = active ? (dir === "desc" ? " ▼" : " ▲") : "";
+    return <Link href={qlink({ sort: key, dir: nextDir, pg: 1 })}
+      style={{ color: "inherit", textDecoration: "none" }}>{label}{arrow}</Link>;
+  };
 
   const balColor = bal >= 0 ? "var(--green, #1a7f37)" : "var(--red, #c62828)";
 
@@ -116,7 +136,7 @@ export default async function LedgerPage({ searchParams }:
         <LedgerPicker parties={P.map(x => ({ id: x.id, name: x.name, type: x.type }))} current={cur?.id ?? ""} />
         <span style={{ flex: 1 }} />
         <CsvBtn name="ledger.csv" rows={[["Date", "Day", "Particulars", "Ref", "Debit", "Credit"],
-          ...filtered.map(r => [r.date, r.dow, r.part, r.no, r.dr || "", r.cr || ""])]} />
+          ...sorted.map(r => [r.date, r.dow, r.part, r.no, r.dr || "", r.cr || ""])]} />
       </div>
       {cur ? (
         <div className="panel">
@@ -131,10 +151,11 @@ export default async function LedgerPage({ searchParams }:
             </div>
           </div>
 
-          {/* filters: date range, search, page size — GET form keeps shareable URLs */}
           <form method="get" style={{ display: "flex", gap: 8, flexWrap: "wrap",
             alignItems: "center", padding: "10px 16px 0" }}>
             <input type="hidden" name="p" value={cur.id} />
+            <input type="hidden" name="sort" value={sort} />
+            <input type="hidden" name="dir" value={dir} />
             <input className="inp mono" type="date" name="from" defaultValue={from} style={{ width: 140 }} />
             <span className="mut" style={{ fontSize: 12 }}>to</span>
             <input className="inp mono" type="date" name="to" defaultValue={to} style={{ width: 140 }} />
@@ -144,14 +165,17 @@ export default async function LedgerPage({ searchParams }:
               {[25, 50, 100, 200, 500].map(n => <option key={n} value={n}>{n} / page</option>)}
             </select>
             <button className="btn sm" type="submit">Go</button>
-            {(from || to || q) && <a className="btn sm" href={`/erp/ledger?p=${cur.id}`}>✕ Clear</a>}
+            {(from || to || q) && <a className="btn sm" href={qlink({ from: "", to: "", q: "", pg: 1 })}>✕ Clear</a>}
           </form>
 
           <div className="tblw" style={{ marginTop: 10 }}><table className="t">
-            <thead><tr><th>Date</th><th>Day</th><th>Particulars</th><th>Ref</th>
-              <th className="num">Debit</th><th className="num">Credit</th><th className="num">Balance</th></tr></thead>
+            <thead><tr>
+              <th>{sortLink("date", "Date")}</th><th>Day</th><th>Particulars</th><th>Ref</th>
+              <th className="num">{sortLink("dr", "Debit")}</th>
+              <th className="num">{sortLink("cr", "Credit")}</th>
+              <th className="num">Balance</th></tr></thead>
             <tbody>
-              {from && filtered.length > 0 && startBal !== opening && (
+              {from && sorted.length > 0 && startBal !== opening && dir === "asc" && (
                 <tr>
                   <td>—</td><td></td>
                   <td><b>Brought forward (up to {from})</b></td><td />
@@ -177,17 +201,16 @@ export default async function LedgerPage({ searchParams }:
                       ₹{Math.abs(run).toLocaleString("en-IN")} {run >= 0 ? "Dr" : "Cr"}</td>
                   </tr>);
               })}
-              {!filtered.length && <tr><td colSpan={7}><div className="empty">
+              {!sorted.length && <tr><td colSpan={7}><div className="empty">
                 {all.length ? "No entries match the filters." : "No transactions."}</div></td></tr>}
             </tbody>
           </table></div>
 
-          {/* pagination footer */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
             padding: "10px 16px 12px" }}>
             <span className="mut" style={{ fontSize: 12 }}>
-              {filtered.length
-                ? `Showing ${(curPg - 1) * size + 1}–${Math.min(curPg * size, filtered.length)} of ${filtered.length} entries`
+              {sorted.length
+                ? `Showing ${(curPg - 1) * size + 1}–${Math.min(curPg * size, sorted.length)} of ${sorted.length} entries`
                 : "Nothing to show"}
             </span>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -200,7 +223,6 @@ export default async function LedgerPage({ searchParams }:
           </div>
         </div>
       ) : <div className="empty">No parties yet.</div>}
-      {/* client wrapper makes voucher numbers clickable → edit modal */}
       <LedgerVoucherLinks vouchers={V.filter(x => cur && x.party_id === cur.id)} />
     </>
   );

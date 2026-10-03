@@ -2,7 +2,7 @@
 import { useState, useTransition } from "react";
 import { reclassUserAction, toggleUserAction, createStaffAction } from "@/sections/catalog/actions";
 import { resetUserPasswordAction } from "@/sections/platform/actions";
-
+import { inviteMemberAction } from "./invite";
 type U = { id: string; name: string; mobile: string | null; role: string; status: string };
 
 export function UsersView({ users, meId, isAdmin }: { users: U[]; meId: string; isAdmin: boolean }) {
@@ -63,39 +63,47 @@ export function UsersView({ users, meId, isAdmin }: { users: U[]; meId: string; 
         </tbody>
       </table></div></div>
       {err && <p className="neg" style={{ fontSize: 13, marginTop: 10 }}>{err}</p>}
-      {showStaff && <StaffForm onClose={() => setShowStaff(false)} />}
+      {showStaff && <InviteForm onClose={() => setShowStaff(false)} />}
     </>
   );
 }
 
-function StaffForm({ onClose }: { onClose: () => void }) {
+function InviteForm({ onClose }: { onClose: () => void }) {
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(30,25,12,.55)", display: "flex",
       alignItems: "center", justifyContent: "center", zIndex: 80, padding: 16 }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="panel" style={{ width: 440, maxWidth: "100%", padding: 22 }}>
-        <h3 style={{ marginBottom: 6 }}>Add staff account</h3>
+      <div className="panel" style={{ width: 460, maxWidth: "100%", padding: 22 }}>
+        <h3 style={{ marginBottom: 6 }}>Invite by mobile</h3>
         <p className="mut" style={{ fontSize: 12.5, marginBottom: 14 }}>
-          Staff can post invoices, purchases &amp; receipts — but can&apos;t manage users or settings.
-          Share the mobile + password with them.</p>
+          Staff get shop-panel access. Customers get an account with ledger &amp; ordering
+          (counts toward your plan cap). If they already use MunshiCloud, they&apos;re linked
+          instantly — otherwise a temporary password is created to share with them.</p>
         <form action={fd => start(async () => {
-          setErr("");
-          try {
-            await createStaffAction(String(fd.get("name") || ""), String(fd.get("mobile") || ""), String(fd.get("password") || ""));
-            onClose();
-          } catch (e: any) { setErr(e.message); }
+          setErr(""); setOk("");
+          const r = await inviteMemberAction(fd);
+          if (r.error) setErr(r.error);
+          else if (r.temp) { setOk(`Account created — temporary password: ${r.temp} — share it with them now.`); }
+          else { setOk("Linked! They'll see this shop in their portfolio."); setTimeout(onClose, 1200); }
         })}>
+          <label className="fl">Role</label>
+          <select className="inp" name="role" defaultValue="customer">
+            <option value="customer">Customer</option>
+            <option value="staff">Staff</option>
+          </select>
+          <div style={{ height: 10 }} />
           <label className="fl">Name *</label><input className="inp" name="name" required />
           <div style={{ height: 10 }} />
-          <label className="fl">Mobile *</label><input className="inp mono" name="mobile" maxLength={12} required />
-          <div style={{ height: 10 }} />
-          <label className="fl">Password * (6+ chars)</label><input className="inp" name="password" type="password" required />
+          <label className="fl">Mobile *</label>
+          <input className="inp mono" name="mobile" maxLength={12} required />
           {err && <p className="neg" style={{ fontSize: 13, marginTop: 10 }}>{err}</p>}
+          {ok && <p className="pos" style={{ fontSize: 13, marginTop: 10, fontWeight: 700 }}>{ok}</p>}
           <div style={{ display: "flex", gap: 9, justifyContent: "flex-end", marginTop: 16 }}>
-            <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn pri" disabled={pending}>{pending ? "Creating…" : "Create"}</button>
+            <button type="button" className="btn" onClick={onClose}>Close</button>
+            <button className="btn pri" disabled={pending}>{pending ? "Inviting…" : "Send invite"}</button>
           </div>
         </form>
       </div>

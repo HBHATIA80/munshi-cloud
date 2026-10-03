@@ -11,4 +11,4 @@ export default async function ExpensesPage() {
   const { data: all } = await sb.from("expenses").select("head");
   return <ExpensesView rows={(rows ?? []) as any}
     heads={[...new Set((all ?? []).map(x => x.head))] as any} />;
-}
+}   
