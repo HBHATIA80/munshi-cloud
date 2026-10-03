@@ -3,12 +3,26 @@ import { myBooks } from "@/sections/account/ui";
 import { ledgerRows } from "@/lib/books";
 import { fmt0 } from "@/lib/format";
 import { LedgerCsv } from "@/sections/account/LedgerCsv";
+import { ledgerAllowed } from "@/lib/plans";
+import { createClient } from "@/lib/supabase/server";
+import { LedgerGate } from "@/sections/account/LedgerGate";
 
 export default async function MyLedgerPage() {
   const s = await requireCustomer();
   if (s.partyType !== "shopkeeper") return <div className="empty">Ledger is for shopkeeper accounts.</div>;
   const { party, vs } = await myBooks();
   if (!party) return <div className="empty">Account setup incomplete — contact the shop.</div>;
+
+  // ── plan gate: the ledger belongs to the shop (party's tenant) ──
+  const sb = await createClient();
+  const { data: tn } = await sb.from("tenants")
+    .select("plan,name").eq("id", (party as any).tenant_id).single();
+  const allowed = ledgerAllowed(tn?.plan) || s.isSuper;
+
+  if (!allowed) {
+    return <LedgerGate shopName={tn?.name ?? "the shop"} />;
+  }
+
   const rows = ledgerRows(vs, party.id);
   let run = party.open || 0;
   const bal = rows.reduce((t, r) => t + r.dr - r.cr, party.open || 0);
