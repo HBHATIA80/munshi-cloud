@@ -4,8 +4,6 @@ import { useRouter } from "next/navigation";
 
 type Item = { id: string; name: string; sku: string; cost: number };
 
-/* Hero item picker: big, full-width, keyboard-first.
-   Shows the selected item's NAME (never the uuid). */
 export function ItemHistoryPicker({ items, itemId, nLimit, view }: {
   items: Item[]; itemId: string; nLimit: number; view: string;
 }) {
@@ -22,6 +20,7 @@ export function ItemHistoryPicker({ items, itemId, nLimit, view }: {
         (i.sku ?? "").toLowerCase().includes(fl))
     : items).slice(0, 10), [items, fl]);
 
+  useEffect(() => { setQ(""); setOpen(false); setHi(0); }, [itemId]);
   useEffect(() => { setHi(0); }, [q]);
   useEffect(() => {
     wrap.current?.querySelector<HTMLElement>(`[data-idx="${hi}"]`)
@@ -44,9 +43,9 @@ export function ItemHistoryPicker({ items, itemId, nLimit, view }: {
   return (
     <div ref={wrap} style={{ position: "relative", width: "100%" }}>
       <input
-        style={{ width: "100%", fontSize: 18, fontWeight: 600,
-          padding: "16px 16px 16px 46px", borderRadius: 12 }}
-        required
+        style={{ width: "100%", fontSize: 17, fontWeight: 600,
+          padding: "14px 14px 14px 44px", borderRadius: 12,
+          background: "var(--card, #fff)" }}
         value={q !== "" ? q : (selected?.name ?? "")}
         placeholder="🔍  Search item name / SKU…"
         onChange={e => { setQ(e.target.value); setOpen(true); setHi(0); }}
@@ -63,14 +62,16 @@ export function ItemHistoryPicker({ items, itemId, nLimit, view }: {
             <div key={i.id} data-idx={idx}
               style={{ display: "flex", gap: 10, alignItems: "center", padding: "11px 14px",
                 borderBottom: "1px solid var(--line)", cursor: "pointer",
-                background: idx === hi ? "var(--card2, #f2ecda)" : "transparent" }}
+                background: idx === hi ? "var(--card2, #f2ecda)" : "transparent",
+                opacity: i.id === itemId ? .55 : 1 }}
               onMouseEnter={() => setHi(idx)}
               onMouseDown={e => e.preventDefault()}
               onClick={() => go(i.id)}>
               <b style={{ fontSize: 14.5, whiteSpace: "nowrap" }}>{i.name}</b>
               {i.sku && <span className="mut mono" style={{ fontSize: 11.5 }}>{i.sku}</span>}
+              {i.id === itemId && <span className="chip grn" style={{ fontSize: 10, marginLeft: 4 }}>shown</span>}
               <span className="mut" style={{ marginLeft: "auto", fontSize: 12, whiteSpace: "nowrap" }}>
-                cost ₹{Math.round(i.cost || 0)}</span>
+                ₹{Math.round(i.cost || 0)}</span>
             </div>))}
         </div>)}
     </div>

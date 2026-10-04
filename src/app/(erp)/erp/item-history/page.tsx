@@ -74,13 +74,14 @@ export default async function ItemHistoryPage({ searchParams }: {
   const cell: React.CSSProperties = { padding: "5px 8px", fontSize: 12 };
 
   const LineTable = ({ rows, kind }: { rows: LineRec[]; kind: "purchase" | "sale" }) => (
-    <div style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 12 }}>
+    <div style={{ border: "1px solid var(--line)", borderRadius: 12, overflow: "hidden" }}>
       <div style={{ display: "flex", justifyContent: "space-between",
-        alignItems: "center", marginBottom: 8 }}>
+        alignItems: "center", padding: "10px 12px", borderBottom: "1px solid var(--line)",
+        background: "var(--card2, #f2ecda)" }}>
         <b style={{ fontSize: 13.5 }}>
-          {kind === "purchase" ? "🛒 Purchase history" : "🧾 Sales history"}
+          {kind === "purchase" ? "🛒 Purchases" : "🧾 Sales"}
           <span className="mut" style={{ fontWeight: 400, fontSize: 11.5, marginLeft: 6 }}>
-            ({rows.length} shown{kind === "sale" && cq ? ` · filtered by “${cq}”` : ""})
+            ({rows.length} shown{kind === "sale" && cq ? ` · “${cq}”` : ""})
           </span>
         </b>
         <CsvBtnLite name={`item-${kind}-history.csv`} rows={rows} kind={kind} />
@@ -93,7 +94,7 @@ export default async function ItemHistoryPage({ searchParams }: {
           <th className="num" style={headCell}>Rate</th>
           <th className="num" style={headCell}>Disc%</th>
           <th className="num" style={headCell}>GST%</th>
-          <th className="num" style={headCell}>Line total</th>
+          <th className="num" style={headCell}>Total</th>
         </tr></thead>
         <tbody>
           {rows.map((r, i) => (
@@ -105,7 +106,7 @@ export default async function ItemHistoryPage({ searchParams }: {
                 {i === 0 && kind === "sale" && r.type === "sale" && <span className="chip grn" style={{ fontSize: 9, marginLeft: 4 }}>last</span>}
               </td>
               <td style={cell}>{r.date}</td>
-              <td style={cell}>{r.party}</td>
+              <td style={{ ...cell, fontWeight: 600 }}>{r.party}</td>
               <td className="num" style={cell}>{r.type === "salret" ? `−${r.qty}` : r.qty}</td>
               <td className="num" style={{ ...cell, fontWeight: 700 }}>{inr(r.rate)}</td>
               <td className="num" style={cell}>{r.disc ? r.disc + "%" : "—"}</td>
@@ -141,60 +142,73 @@ export default async function ItemHistoryPage({ searchParams }: {
 
   const Stat = ({ label, value, sub, color }: {
     label: string; value: string; sub?: string; color?: string }) => (
-    <div style={{ flex: "1 1 130px", border: "1px solid var(--line)", borderRadius: 10,
-      padding: "10px 12px" }}>
+    <div style={{ flex: "1 1 130px", background: "var(--card, #fff)",
+      border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px" }}>
       <div className="mut" style={{ fontSize: 10, textTransform: "uppercase",
         letterSpacing: ".08em" }}>{label}</div>
-      <b style={{ fontSize: 17, color }}>{value}</b>
-      {sub && <div className="mut" style={{ fontSize: 11 }}>{sub}</div>}
+      <b style={{ fontSize: 17, color, display: "block", marginTop: 2 }}>{value}</b>
+      {sub && <div className="mut" style={{ fontSize: 11, marginTop: 1 }}>{sub}</div>}
     </div>);
+
+  const viewLink = (v: string, label: string) => (
+    <Link href={`/erp/item-history?item=${itemId}&n=${nLimit}&view=${v}&cq=${encodeURIComponent(cq)}`}
+      className={"fchip" + (view === v ? " on" : "")}>{label}</Link>);
 
   return (
     <>
-      <div style={{ maxWidth: 900, margin: "0 auto 6px" }}>
-        <h2 style={{ margin: "0 0 2px" }}>Item history</h2>
-        <p className="mut" style={{ fontSize: 13, margin: "0 0 14px" }}>
-          Pick an item — see every purchase and sale, with rates, discounts, GST and serials.</p>
-
-        {/* ── hero picker row ── */}
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-          <div style={{ flex: "1 1 420px" }}>
-            <ItemHistoryPicker items={(items ?? []) as any} itemId={itemId}
-              nLimit={nLimit} view={view} />
-          </div>
-          <form method="get" action="/erp/item-history" style={{ display: "flex",
-            gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <input type="hidden" name="item" value={itemId} />
-            <div>
-              <label className="fl" style={{ fontSize: 11 }}>Entries</label>
-              <select className="inp mono" name="n" defaultValue={String(nLimit)} style={{ width: 92 }}>
-                {[5, 10, 20, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="fl" style={{ fontSize: 11 }}>Show</label>
-              <select className="inp" name="view" defaultValue={view} style={{ width: 120 }}>
-                <option value="both">Both</option>
-                <option value="purch">Purchases</option>
-                <option value="sales">Sales</option>
-              </select>
-            </div>
-            <button className="btn pri" type="submit"
-              style={{ padding: "10px 18px", fontSize: 14 }}>Show history</button>
-          </form>
+      {/* ── dark hero: title + picker + controls ── */}
+      <div style={{ maxWidth: 1100, margin: "0 auto 14px", borderRadius: 16,
+        background: "var(--dark)", color: "#f2edde", padding: "20px 22px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between",
+          alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 22 }}>Item history</h2>
+          <span style={{ fontSize: 12, color: "#b8b3a0" }}>
+            purchases &amp; sales trail · line-level detail</span>
         </div>
+        <div style={{ marginTop: 12 }}>
+          <ItemHistoryPicker key={itemId} items={(items ?? []) as any} itemId={itemId}
+            nLimit={nLimit} view={view} />
+        </div>
+        {itemId && (
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap",
+            alignItems: "center", marginTop: 12 }}>
+            <span className="mut" style={{ fontSize: 12, color: "#b8b3a0" }}>Entries</span>
+            {[10, 20, 50].map(n => (
+              <Link key={n} href={`/erp/item-history?item=${itemId}&n=${n}&view=${view}&cq=${encodeURIComponent(cq)}`}
+                className={"fchip" + (nLimit === n ? " on" : "")}
+                style={{ background: nLimit === n ? "rgba(255,255,255,.16)" : "rgba(255,255,255,.08)",
+                  color: "#f2edde", borderColor: "transparent" }}>{n}</Link>))}
+            <span style={{ flex: 1 }} />
+            <span className="mut" style={{ fontSize: 12, color: "#b8b3a0" }}>Show</span>
+            {viewLink("both", "Both")}
+            {viewLink("purch", "Purchases")}
+            {viewLink("sales", "Sales")}
+          </div>)}
       </div>
 
       {!itemId && (
-        <div className="empty" style={{ maxWidth: 900, margin: "0 auto" }}>
+        <div className="empty" style={{ maxWidth: 1100, margin: "0 auto" }}>
           🔍 Search an item above — its complete purchase &amp; sales history appears here.</div>)}
 
       {item && (
         <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-          {/* ── summary strip ── */}
-          <div className="panel" style={{ marginBottom: 14, padding: 14 }}>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <Stat label="Item" value={item.name} sub={item.sku ? `SKU ${item.sku}` : undefined} />
+          {/* ── item banner ── */}
+          <div className="panel" style={{ marginBottom: 14, padding: "14px 16px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between",
+              flexWrap: "wrap", gap: 10 }}>
+              <div>
+                <b style={{ font: "600 20px var(--font-disp)" }}>{item.name}</b>
+                <div className="mut" style={{ fontSize: 12, marginTop: 2 }}>
+                  {item.sku ? `SKU ${item.sku} · ` : ""}unit {item.unit ?? "pc"}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>Stock now</div>
+                <b style={{ font: "600 20px var(--font-disp)",
+                  color: (item.stock ?? 0) <= 0 ? "var(--red, #c62828)" : "inherit" }}>
+                  {item.stock ?? 0}</b>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
               <Stat label="Last purchase" value={lastPu ? inr(lastPu.rate) : "—"}
                 sub={lastPu ? `${lastPu.party} · ${lastPu.date}` : undefined} />
               <Stat label="Last sold" value={lastSale ? inr(lastSale.rate) : "—"}
@@ -208,43 +222,37 @@ export default async function ItemHistoryPage({ searchParams }: {
               <Stat label="Qty bought / sold"
                 value={`${qtyPurchased} / ${qtySold}`}
                 sub={`spent ${inr(spentP)} · earned ${inr(earnedS)}`} />
-              <Stat label="Stock now" value={String(item.stock ?? 0)}
-                sub={`master cost ${inr(item.cost)}${lastPu && item.cost !== lastPu.rate ? " · drift" : ""}`}
-                color={(item.stock ?? 0) <= 0 ? "var(--red, #c62828)" : undefined} />
+              <Stat label="Master cost" value={inr(item.cost)}
+                sub={lastPu && item.cost !== lastPu.rate ? "⚠ drift vs last bill" : "matches last bill"} />
             </div>
           </div>
 
-          {/* ── purchases ── */}
           {view !== "sales" && <div style={{ marginBottom: 14 }}><LineTable rows={purch} kind="purchase" /></div>}
 
-          {/* ── sales — with customer filter INSIDE the section ── */}
           {view !== "purch" && (
-            <div style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between",
-                alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-                <b style={{ fontSize: 13.5 }}>🧾 Sales history
+            <div style={{ border: "1px solid var(--line)", borderRadius: 12, overflow: "hidden" }}>
+              <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--line)",
+                background: "var(--card2, #f2ecda)", display: "flex",
+                justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <b style={{ fontSize: 13.5 }}>🧾 Sales
                   <span className="mut" style={{ fontWeight: 400, fontSize: 11.5, marginLeft: 6 }}>
-                    ({sales.length} shown{cq ? ` · filtered by “${cq}”` : ""})
-                  </span>
+                    ({sales.length} shown{cq ? ` · “${cq}”` : ""})</span>
                 </b>
                 <CsvBtnLite name="item-sales-history.csv" rows={sales} kind="sale" />
               </div>
-
-              {/* customer filter — lives in the sales section */}
               <form method="get" action="/erp/item-history" style={{ display: "flex",
-                gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                gap: 8, padding: "12px", borderBottom: "1px solid var(--line)", flexWrap: "wrap" }}>
                 <input type="hidden" name="item" value={itemId} />
                 <input type="hidden" name="n" value={String(nLimit)} />
                 <input type="hidden" name="view" value={view} />
                 <input className="inp" name="cq" defaultValue={cq}
                   placeholder="🔍  Search customer name — who bought this item…"
-                  style={{ flex: "1 1 320px", fontSize: 14.5, padding: "10px 14px",
-                    borderRadius: 10 }} />
+                  style={{ flex: "1 1 320px", fontSize: 15, fontWeight: 600,
+                    padding: "11px 14px", borderRadius: 10 }} />
                 <button className="btn pri" type="submit"
-                  style={{ padding: "10px 18px" }}>Search</button>
+                  style={{ padding: "10px 20px", fontSize: 14 }}>Search</button>
                 {cq && <Link className="btn" href={`/erp/item-history?item=${itemId}&n=${nLimit}&view=${view}`}>✕ Clear</Link>}
               </form>
-
               <div className="tblw"><table className="t">
                 <thead><tr>
                   <th style={headCell}>Invoice</th><th style={headCell}>Date</th>
@@ -253,7 +261,7 @@ export default async function ItemHistoryPage({ searchParams }: {
                   <th className="num" style={headCell}>Rate</th>
                   <th className="num" style={headCell}>Disc%</th>
                   <th className="num" style={headCell}>GST%</th>
-                  <th className="num" style={headCell}>Line total</th>
+                  <th className="num" style={headCell}>Total</th>
                 </tr></thead>
                 <tbody>
                   {sales.map((r, i) => (
