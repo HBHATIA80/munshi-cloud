@@ -37,8 +37,7 @@ export default async function ReportsPage({ searchParams }: {
   const tab = ["stock", "out", "gst", "pnl", "mv"].includes(sp.tab || "") ? sp.tab! : "stock";
   const to = sp.to || new Date().toISOString().slice(0, 10);
   const from = sp.from || new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
-  const pnlView = (PNL_VIEWS.map(v => v[0]).includes(sp.v || "") ? sp.v : "sum")!;
-  const q = (sp.q || "").trim();
+  const pnlView = (sp.v && PNL_VIEWS.some(v => v[0] === sp.v) ? sp.v : "sum") as (typeof PNL_VIEWS)[number][0];  const q = (sp.q || "").trim();
   const size = Math.min(200, Math.max(10, +(sp.size || 25) || 25));
   const pg = Math.max(1, +(sp.pg || 1) || 1);
   const itemId = sp.item || "";
