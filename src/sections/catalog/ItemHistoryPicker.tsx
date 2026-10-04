@@ -5,18 +5,18 @@ import { useRouter } from "next/navigation";
 type Item = { id: string; name: string; sku: string; cost: number };
 
 /* Live item picker for the Item History page.
-   Type → suggestions (name + SKU + master cost) → click or Enter/Tab selects →
-   navigates to ?item=<id>&n=<n>. Displays the NAME, submits the ID. */
+   Fully controlled: after selection the box shows the item NAME (never the uuid).
+   Type → suggestions (name + SKU + cost) → click or Enter/Tab selects. */
 export function ItemHistoryPicker({ items, itemId, nLimit, view }: {
   items: Item[]; itemId: string; nLimit: number; view: string;
 }) {
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState("");           // what the user is typing ("" = show selected)
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
   const wrap = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
-  const selected = items.find(i => i.id === itemId);
+  const selected = items.find(i => i.id === itemId) ?? null;
   const fl = q.trim().toLowerCase();
   const options = useMemo(() => (fl
     ? items.filter(i => i.name.toLowerCase().includes(fl) ||
@@ -46,13 +46,14 @@ export function ItemHistoryPicker({ items, itemId, nLimit, view }: {
     <div ref={wrap} style={{ position: "relative", maxWidth: 360 }}>
       <input className="inp" required
         style={{ width: "100%" }}
-        placeholder={selected ? selected.name : "Type to search item name / SKU…"}
-        value={q !== "" ? q : (selected ? selected.name : "")}
+        /* controlled: q wins while typing; otherwise show the selected NAME */
+        value={q !== "" ? q : (selected?.name ?? "")}
+        placeholder="Type to search item name / SKU…"
         onChange={e => { setQ(e.target.value); setOpen(true); setHi(0); }}
         onFocus={() => { setOpen(true); setHi(0); }}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         onKeyDown={onKey} autoComplete="off" />
-      {open && q.trim() && options.length > 0 && (
+      {open && q.trim() !== "" && options.length > 0 && (
         <div style={{ position: "absolute", zIndex: 70, left: 0, right: 0,
           top: "calc(100% + 4px)", background: "var(--card, #fff)",
           border: "1px solid var(--line)", borderRadius: 10, overflow: "hidden",

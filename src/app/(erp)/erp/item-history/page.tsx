@@ -1,16 +1,18 @@
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
+import { ItemHistoryPicker } from "@/sections/catalog/ItemHistoryPicker";
 
 const inr = (n: number) => "₹" + Math.round(+n || 0).toLocaleString("en-IN");
 
 export default async function ItemHistoryPage({ searchParams }: {
-  searchParams: Promise<{ item?: string; n?: string; view?: string }> }) {
+  searchParams: Promise<{ item?: string; n?: string; view?: string; cq?: string }> }) {
   const s = await requireStaff();
   const sp = await searchParams;
   const itemId = sp.item || "";
   const nLimit = Math.min(200, Math.max(1, +(sp.n || 10) || 10));
   const view = sp.view === "sales" ? "sales" : sp.view === "purch" ? "purch" : "both";
+  const cq = (sp.cq || "").trim();          // customer filter for the sales table
 
   const sb = await createClient();
   const [{ data: items }, { data: parties }] = await Promise.all([
@@ -28,7 +30,7 @@ export default async function ItemHistoryPage({ searchParams }: {
     serials: string[];
   };
   const purch: LineRec[] = [];
-  const sales: LineRec[] = [];
+  let sales: LineRec[] = [];
   let qtyPurchased = 0, qtySold = 0, spentP = 0, earnedS = 0;
 
   if (itemId) {
@@ -61,6 +63,10 @@ export default async function ItemHistoryPage({ searchParams }: {
         }
       }
     }
+
+    // sales searchable by customer name (totals above stay complete — filter only trims the view)
+    const cql = cq.toLowerCase();
+    if (cql) sales = sales.filter(r => r.party.toLowerCase().includes(cql));
   }
 
   const lastPu = purch[0] ?? null;
@@ -77,7 +83,7 @@ export default async function ItemHistoryPage({ searchParams }: {
         <b style={{ fontSize: 13.5 }}>
           {kind === "purchase" ? "🛒 Purchase history" : "🧾 Sales history"}
           <span className="mut" style={{ fontWeight: 400, fontSize: 11.5, marginLeft: 6 }}>
-            ({rows.length} of latest {nLimit})
+            ({rows.length} shown{kind === "sale" && cq ? ` · filtered by “${cq}”` : ""})
           </span>
         </b>
         <CsvBtnLite name={`item-${kind}-history.csv`} rows={rows} kind={kind} />
@@ -115,7 +121,9 @@ export default async function ItemHistoryPage({ searchParams }: {
                 S/N: {r.serials.join(", ")}</td>
             </tr>) : null)}
           {!rows.length && <tr><td colSpan={8}><div className="empty">
-            No {kind === "purchase" ? "purchases" : "sales"} recorded for this item.</div></td></tr>}
+            {kind === "sale" && cq
+              ? `No sales to “${cq}” in the latest ${nLimit}.`
+              : `No ${kind === "purchase" ? "purchases" : "sales"} recorded for this item.`}</div></td></tr>}
         </tbody>
       </table></div>
     </div>
@@ -144,27 +152,29 @@ export default async function ItemHistoryPage({ searchParams }: {
           Search an item, choose how many entries to see.</p>
       </div>
 
-      {/* picker */}
-      <form method="get" action="/erp/item-history" style={{ display: "flex", gap: 8,
-        flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
-        <input className="inp" name="item" list="itemlist" defaultValue={itemId}
-          placeholder="Type to search item name / SKU…" required
-          style={{ maxWidth: 360 }} />
-        <datalist id="itemlist">
-          {(items ?? []).map((i: any) => (
-            <option key={i.id} value={i.id}>{i.name}{i.sku ? ` · ${i.sku}` : ""}</option>))}
-        </datalist>
-        <label className="mut" style={{ fontSize: 12 }}>Entries</label>
-        <select className="inp mono" name="n" defaultValue={String(nLimit)} style={{ width: 90 }}>
-          {[5, 10, 20, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
-        </select>
-        <select className="inp" name="view" defaultValue={view} style={{ width: 130 }}>
-          <option value="both">Both</option>
-          <option value="purch">Purchases only</option>
-          <option value="sales">Sales only</option>
-        </select>
-        <button className="btn pri sm" type="submit">Show history</button>
-      </form>
+      {/* picker (shows NAME, never uuid) + filters */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+        alignItems: "center", marginBottom: 14 }}>
+        <ItemHistoryPicker items={(items ?? []) as any} itemId={itemId}
+          nLimit={nLimit} view={view} />
+        <form method="get" action="/erp/item-history" style={{ display: "flex",
+          gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input type="hidden" name="item" value={itemId} />
+          <label className="mut" style={{ fontSize: 12 }}>Entries</label>
+          <select className="inp mono" name="n" defaultValue={String(nLimit)} style={{ width: 90 }}>
+            {[5, 10, 20, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+          <select className="inp" name="view" defaultValue={view} style={{ width: 130 }}>
+            <option value="both">Both</option>
+            <option value="purch">Purchases only</option>
+            <option value="sales">Sales only</option>
+          </select>
+          {view !== "purch" && (
+            <input className="inp" name="cq" defaultValue={cq}
+              placeholder="Filter sales by customer…" style={{ maxWidth: 200 }} />)}
+          <button className="btn pri sm" type="submit">Show history</button>
+        </form>
+      </div>
 
       {!itemId && <div className="empty">Search an item above to load its full purchase &amp; sales history.</div>}
 
