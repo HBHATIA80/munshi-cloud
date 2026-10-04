@@ -21,6 +21,8 @@ const NAV = [
     { href: "/erp/purch", label: "New Purchase", icon: "＋" },
     { href: "/erp/purchreg", label: "Purchase Register", icon: "☰" },
     { href: "/erp/pay", label: "Payments", icon: "↗" },
+    { href: "/erp/item-history", label: "Item History", icon: "🕒" },
+    { href: "/erp/supplier-catalog", label: "Bought from suppliers", icon: "🛍" },
   ]},
   { sec: "Returns", items: [
     { href: "/erp/returns", label: "Credit / Debit Notes", icon: "⇄" },
