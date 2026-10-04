@@ -4,13 +4,12 @@ import { useRouter } from "next/navigation";
 
 type Item = { id: string; name: string; sku: string; cost: number };
 
-/* Live item picker for the Item History page.
-   Fully controlled: after selection the box shows the item NAME (never the uuid).
-   Type → suggestions (name + SKU + cost) → click or Enter/Tab selects. */
+/* Hero item picker: big, full-width, keyboard-first.
+   Shows the selected item's NAME (never the uuid). */
 export function ItemHistoryPicker({ items, itemId, nLimit, view }: {
   items: Item[]; itemId: string; nLimit: number; view: string;
 }) {
-  const [q, setQ] = useState("");           // what the user is typing ("" = show selected)
+  const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
   const wrap = useRef<HTMLDivElement>(null);
@@ -43,12 +42,13 @@ export function ItemHistoryPicker({ items, itemId, nLimit, view }: {
   };
 
   return (
-    <div ref={wrap} style={{ position: "relative", maxWidth: 360 }}>
-      <input className="inp" required
-        style={{ width: "100%" }}
-        /* controlled: q wins while typing; otherwise show the selected NAME */
+    <div ref={wrap} style={{ position: "relative", width: "100%" }}>
+      <input
+        style={{ width: "100%", fontSize: 18, fontWeight: 600,
+          padding: "16px 16px 16px 46px", borderRadius: 12 }}
+        required
         value={q !== "" ? q : (selected?.name ?? "")}
-        placeholder="Type to search item name / SKU…"
+        placeholder="🔍  Search item name / SKU…"
         onChange={e => { setQ(e.target.value); setOpen(true); setHi(0); }}
         onFocus={() => { setOpen(true); setHi(0); }}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
@@ -56,20 +56,20 @@ export function ItemHistoryPicker({ items, itemId, nLimit, view }: {
       {open && q.trim() !== "" && options.length > 0 && (
         <div style={{ position: "absolute", zIndex: 70, left: 0, right: 0,
           top: "calc(100% + 4px)", background: "var(--card, #fff)",
-          border: "1px solid var(--line)", borderRadius: 10, overflow: "hidden",
-          boxShadow: "0 10px 30px rgba(0,0,0,.14)", maxHeight: 264, overflowY: "auto",
+          border: "1px solid var(--line)", borderRadius: 12, overflow: "hidden",
+          boxShadow: "0 12px 34px rgba(0,0,0,.16)", maxHeight: 300, overflowY: "auto",
           overscrollBehavior: "contain" }}>
           {options.map((i, idx) => (
             <div key={i.id} data-idx={idx}
-              style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 12px",
+              style={{ display: "flex", gap: 10, alignItems: "center", padding: "11px 14px",
                 borderBottom: "1px solid var(--line)", cursor: "pointer",
                 background: idx === hi ? "var(--card2, #f2ecda)" : "transparent" }}
               onMouseEnter={() => setHi(idx)}
               onMouseDown={e => e.preventDefault()}
               onClick={() => go(i.id)}>
-              <b style={{ fontSize: 13, whiteSpace: "nowrap" }}>{i.name}</b>
-              {i.sku && <span className="mut mono" style={{ fontSize: 11 }}>{i.sku}</span>}
-              <span className="mut" style={{ marginLeft: "auto", fontSize: 11, whiteSpace: "nowrap" }}>
+              <b style={{ fontSize: 14.5, whiteSpace: "nowrap" }}>{i.name}</b>
+              {i.sku && <span className="mut mono" style={{ fontSize: 11.5 }}>{i.sku}</span>}
+              <span className="mut" style={{ marginLeft: "auto", fontSize: 12, whiteSpace: "nowrap" }}>
                 cost ₹{Math.round(i.cost || 0)}</span>
             </div>))}
         </div>)}

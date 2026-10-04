@@ -12,7 +12,7 @@ export default async function ItemHistoryPage({ searchParams }: {
   const itemId = sp.item || "";
   const nLimit = Math.min(200, Math.max(1, +(sp.n || 10) || 10));
   const view = sp.view === "sales" ? "sales" : sp.view === "purch" ? "purch" : "both";
-  const cq = (sp.cq || "").trim();          // customer filter for the sales table
+  const cq = (sp.cq || "").trim();
 
   const sb = await createClient();
   const [{ data: items }, { data: parties }] = await Promise.all([
@@ -23,7 +23,6 @@ export default async function ItemHistoryPage({ searchParams }: {
   const P = new Map((parties ?? []).map((p: any) => [p.id, p.name]));
   const item = (items ?? []).find((i: any) => i.id === itemId);
 
-  // ── full-detail trail: newest first, ALL line fields ──
   type LineRec = {
     no: string; date: string; party: string; type: string;
     qty: number; rate: number; disc: number; gst: number; total: number;
@@ -63,8 +62,6 @@ export default async function ItemHistoryPage({ searchParams }: {
         }
       }
     }
-
-    // sales searchable by customer name (totals above stay complete — filter only trims the view)
     const cql = cq.toLowerCase();
     if (cql) sales = sales.filter(r => r.party.toLowerCase().includes(cql));
   }
@@ -129,7 +126,6 @@ export default async function ItemHistoryPage({ searchParams }: {
     </div>
   );
 
-  // tiny inline CSV (avoids importing CsvBtn client comp on a server page)
   function CsvBtnLite({ name, rows, kind }: { name: string; rows: LineRec[]; kind: string }) {
     const header = kind === "purchase"
       ? ["Bill", "Date", "Supplier", "Qty", "Rate", "Disc%", "GST%", "Line total", "Serials"]
@@ -143,91 +139,156 @@ export default async function ItemHistoryPage({ searchParams }: {
     );
   }
 
+  const Stat = ({ label, value, sub, color }: {
+    label: string; value: string; sub?: string; color?: string }) => (
+    <div style={{ flex: "1 1 130px", border: "1px solid var(--line)", borderRadius: 10,
+      padding: "10px 12px" }}>
+      <div className="mut" style={{ fontSize: 10, textTransform: "uppercase",
+        letterSpacing: ".08em" }}>{label}</div>
+      <b style={{ fontSize: 17, color }}>{value}</b>
+      {sub && <div className="mut" style={{ fontSize: 11 }}>{sub}</div>}
+    </div>);
+
   return (
     <>
-      <div className="ph" style={{ marginBottom: 10 }}>
-        <h2>Item history — purchase &amp; sales trail</h2>
-        <p className="mut" style={{ fontSize: 12 }}>
-          Full line-level detail per document: rate, discount, GST, totals, serials.
-          Search an item, choose how many entries to see.</p>
+      <div style={{ maxWidth: 900, margin: "0 auto 6px" }}>
+        <h2 style={{ margin: "0 0 2px" }}>Item history</h2>
+        <p className="mut" style={{ fontSize: 13, margin: "0 0 14px" }}>
+          Pick an item — see every purchase and sale, with rates, discounts, GST and serials.</p>
+
+        {/* ── hero picker row ── */}
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div style={{ flex: "1 1 420px" }}>
+            <ItemHistoryPicker items={(items ?? []) as any} itemId={itemId}
+              nLimit={nLimit} view={view} />
+          </div>
+          <form method="get" action="/erp/item-history" style={{ display: "flex",
+            gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input type="hidden" name="item" value={itemId} />
+            <div>
+              <label className="fl" style={{ fontSize: 11 }}>Entries</label>
+              <select className="inp mono" name="n" defaultValue={String(nLimit)} style={{ width: 92 }}>
+                {[5, 10, 20, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="fl" style={{ fontSize: 11 }}>Show</label>
+              <select className="inp" name="view" defaultValue={view} style={{ width: 120 }}>
+                <option value="both">Both</option>
+                <option value="purch">Purchases</option>
+                <option value="sales">Sales</option>
+              </select>
+            </div>
+            <button className="btn pri" type="submit"
+              style={{ padding: "10px 18px", fontSize: 14 }}>Show history</button>
+          </form>
+        </div>
       </div>
 
-      {/* picker (shows NAME, never uuid) + filters */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
-        alignItems: "center", marginBottom: 14 }}>
-        <ItemHistoryPicker items={(items ?? []) as any} itemId={itemId}
-          nLimit={nLimit} view={view} />
-        <form method="get" action="/erp/item-history" style={{ display: "flex",
-          gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <input type="hidden" name="item" value={itemId} />
-          <label className="mut" style={{ fontSize: 12 }}>Entries</label>
-          <select className="inp mono" name="n" defaultValue={String(nLimit)} style={{ width: 90 }}>
-            {[5, 10, 20, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-          <select className="inp" name="view" defaultValue={view} style={{ width: 130 }}>
-            <option value="both">Both</option>
-            <option value="purch">Purchases only</option>
-            <option value="sales">Sales only</option>
-          </select>
-          {view !== "purch" && (
-            <input className="inp" name="cq" defaultValue={cq}
-              placeholder="Filter sales by customer…" style={{ maxWidth: 200 }} />)}
-          <button className="btn pri sm" type="submit">Show history</button>
-        </form>
-      </div>
-
-      {!itemId && <div className="empty">Search an item above to load its full purchase &amp; sales history.</div>}
+      {!itemId && (
+        <div className="empty" style={{ maxWidth: 900, margin: "0 auto" }}>
+          🔍 Search an item above — its complete purchase &amp; sales history appears here.</div>)}
 
       {item && (
-        <div className="panel" style={{ marginBottom: 14 }}>
-          <div className="ph"><h3>{item.name}</h3>
-            <div className="mut" style={{ fontSize: 12 }}>
-              {item.sku ? `SKU ${item.sku} · ` : ""}unit {item.unit ?? "pc"} · stock <b>{item.stock ?? 0}</b></div></div>
-          <div className="pb" style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ flex: "1 1 140px" }}>
-              <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>Last purchase</div>
-              <b style={{ fontSize: 16 }}>{lastPu ? inr(lastPu.rate) : "—"}</b>
-              {lastPu && <div className="mut" style={{ fontSize: 11 }}>{lastPu.party} · {lastPu.date}</div>}
-            </div>
-            <div style={{ flex: "1 1 140px" }}>
-              <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>Last sold</div>
-              <b style={{ fontSize: 16 }}>{lastSale ? inr(lastSale.rate) : "—"}</b>
-              {lastSale && <div className="mut" style={{ fontSize: 11 }}>{lastSale.party} · {lastSale.date}</div>}
-            </div>
-            <div style={{ flex: "1 1 140px" }}>
-              <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>Implied margin</div>
-              {margin !== null
-                ? <b style={{ fontSize: 16, color: margin >= 0 ? "var(--green, #1a7f37)" : "var(--red, #c62828)" }}>
-                    {inr(margin)}</b>
-                : <b style={{ fontSize: 16 }}>—</b>}
-              <div className="mut" style={{ fontSize: 11 }}>last buy vs last sale</div>
-            </div>
-            <div style={{ flex: "1 1 140px" }}>
-              <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>Qty purchased</div>
-              <b style={{ fontSize: 16 }}>{qtyPurchased}</b>
-              <div className="mut" style={{ fontSize: 11 }}>spent {inr(spentP)}</div>
-            </div>
-            <div style={{ flex: "1 1 140px" }}>
-              <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>Qty sold</div>
-              <b style={{ fontSize: 16 }}>{qtySold}</b>
-              <div className="mut" style={{ fontSize: 11 }}>earned {inr(earnedS)}</div>
-            </div>
-            <div style={{ flex: "1 1 140px" }}>
-              <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>Master cost</div>
-              <b style={{ fontSize: 16 }}>{inr(item.cost)}</b>
-              {lastPu && item.cost !== lastPu.rate &&
-                <span className="chip amb" style={{ marginLeft: 6 }}>drift</span>}
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          {/* ── summary strip ── */}
+          <div className="panel" style={{ marginBottom: 14, padding: 14 }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <Stat label="Item" value={item.name} sub={item.sku ? `SKU ${item.sku}` : undefined} />
+              <Stat label="Last purchase" value={lastPu ? inr(lastPu.rate) : "—"}
+                sub={lastPu ? `${lastPu.party} · ${lastPu.date}` : undefined} />
+              <Stat label="Last sold" value={lastSale ? inr(lastSale.rate) : "—"}
+                sub={lastSale ? `${lastSale.party} · ${lastSale.date}` : undefined} />
+              <Stat label="Implied margin"
+                value={margin !== null ? inr(margin) : "—"}
+                sub="last buy vs last sale"
+                color={margin != null
+                  ? (margin >= 0 ? "var(--green, #1a7f37)" : "var(--red, #c62828)")
+                  : undefined} />
+              <Stat label="Qty bought / sold"
+                value={`${qtyPurchased} / ${qtySold}`}
+                sub={`spent ${inr(spentP)} · earned ${inr(earnedS)}`} />
+              <Stat label="Stock now" value={String(item.stock ?? 0)}
+                sub={`master cost ${inr(item.cost)}${lastPu && item.cost !== lastPu.rate ? " · drift" : ""}`}
+                color={(item.stock ?? 0) <= 0 ? "var(--red, #c62828)" : undefined} />
             </div>
           </div>
+
+          {/* ── purchases ── */}
+          {view !== "sales" && <div style={{ marginBottom: 14 }}><LineTable rows={purch} kind="purchase" /></div>}
+
+          {/* ── sales — with customer filter INSIDE the section ── */}
+          {view !== "purch" && (
+            <div style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between",
+                alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                <b style={{ fontSize: 13.5 }}>🧾 Sales history
+                  <span className="mut" style={{ fontWeight: 400, fontSize: 11.5, marginLeft: 6 }}>
+                    ({sales.length} shown{cq ? ` · filtered by “${cq}”` : ""})
+                  </span>
+                </b>
+                <CsvBtnLite name="item-sales-history.csv" rows={sales} kind="sale" />
+              </div>
+
+              {/* customer filter — lives in the sales section */}
+              <form method="get" action="/erp/item-history" style={{ display: "flex",
+                gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                <input type="hidden" name="item" value={itemId} />
+                <input type="hidden" name="n" value={String(nLimit)} />
+                <input type="hidden" name="view" value={view} />
+                <input className="inp" name="cq" defaultValue={cq}
+                  placeholder="🔍  Search customer name — who bought this item…"
+                  style={{ flex: "1 1 320px", fontSize: 14.5, padding: "10px 14px",
+                    borderRadius: 10 }} />
+                <button className="btn pri" type="submit"
+                  style={{ padding: "10px 18px" }}>Search</button>
+                {cq && <Link className="btn" href={`/erp/item-history?item=${itemId}&n=${nLimit}&view=${view}`}>✕ Clear</Link>}
+              </form>
+
+              <div className="tblw"><table className="t">
+                <thead><tr>
+                  <th style={headCell}>Invoice</th><th style={headCell}>Date</th>
+                  <th style={headCell}>Customer</th>
+                  <th className="num" style={headCell}>Qty</th>
+                  <th className="num" style={headCell}>Rate</th>
+                  <th className="num" style={headCell}>Disc%</th>
+                  <th className="num" style={headCell}>GST%</th>
+                  <th className="num" style={headCell}>Line total</th>
+                </tr></thead>
+                <tbody>
+                  {sales.map((r, i) => (
+                    <tr key={r.no + i}>
+                      <td style={{ ...cell, whiteSpace: "nowrap" }}>
+                        <b className="mono">{r.no}</b>
+                        {r.type === "salret" && <span className="chip red" style={{ fontSize: 9, marginLeft: 4 }}>ret</span>}
+                        {i === 0 && r.type === "sale" && <span className="chip grn" style={{ fontSize: 9, marginLeft: 4 }}>last</span>}
+                      </td>
+                      <td style={cell}>{r.date}</td>
+                      <td style={{ ...cell, fontWeight: 600 }}>{r.party}</td>
+                      <td className="num" style={cell}>{r.type === "salret" ? `−${r.qty}` : r.qty}</td>
+                      <td className="num" style={{ ...cell, fontWeight: 700 }}>{inr(r.rate)}</td>
+                      <td className="num" style={cell}>{r.disc ? r.disc + "%" : "—"}</td>
+                      <td className="num" style={cell}>{r.gst ? r.gst + "%" : "—"}</td>
+                      <td className="num" style={{ ...cell, fontWeight: 700 }}>{inr(r.total)}</td>
+                    </tr>))}
+                  {sales.map((r, i) => r.serials.length > 0 ? (
+                    <tr key={"s" + i} style={{ background: "var(--card2, #f7f3e6)" }}>
+                      <td /><td colSpan={7} style={{ ...cell, fontSize: 11 }} className="mut">
+                        S/N: {r.serials.join(", ")}</td>
+                    </tr>) : null)}
+                  {!sales.length && <tr><td colSpan={8}><div className="empty">
+                    {cq ? `No sales to “${cq}” in the latest ${nLimit}.`
+                      : "No sales recorded for this item."}</div></td></tr>}
+                </tbody>
+              </table></div>
+            </div>)}
+
+          <p className="mut" style={{ fontSize: 11.5, marginTop: 10 }}>
+            Summary view: <Link href={`/erp/reports?tab=mv&item=${itemId}&n=${nLimit}`}
+              style={{ color: "var(--brand)" }}>Item Movement in Reports</Link>
+            {" · "}Individual units: <Link href="/erp/serials"
+              style={{ color: "var(--brand)" }}>Serial Lookup</Link></p>
         </div>)}
-
-      {item && view !== "sales" && <div style={{ marginBottom: 14 }}><LineTable rows={purch} kind="purchase" /></div>}
-      {item && view !== "purch" && <LineTable rows={sales} kind="sale" />}
-
-      <p className="mut" style={{ fontSize: 11.5, marginTop: 8 }}>
-        Deeper trail? Open <Link href={`/erp/reports?tab=mv&item=${itemId}&n=${nLimit}`}
-        style={{ color: "var(--brand)" }}>Item Movement in Reports</Link> for the summary view,
-        or the <Link href="/erp/serials" style={{ color: "var(--brand)" }}>Serial Lookup</Link> for individual units.</p>
     </>
   );
 }
