@@ -5,13 +5,15 @@ import { CsvBtn } from "@/lib/CsvBtn";
 import { ChartsModal } from "@/sections/reports/PnlCharts";
 import Link from "next/link";
 
-const TABS = [["stock", "Stock"], ["out", "Outstanding"], ["gst", "GST"], ["pnl", "Profit & Loss"]] as const;
-const PNL_VIEWS = [["sum", "Summary"], ["inv", "By Invoice"], ["item", "By Item"], ["cat", "By Category"],
-  ["brand", "By Brand"], ["cust", "By Customer"], ["sup", "By Supplier"], ["day", "By Day"]] as const;
+const TABS = [["stock", "Stock"], ["out", "Outstanding"], ["gst", "GST"],
+  ["pnl", "Profit & Loss"], ["mv", "Item Movement"]] as const;
+const PNL_VIEWS = [["sum", "Summary"], ["inv", "By Invoice"], ["item", "By Item"],
+  ["cat", "By Category"], ["brand", "By Brand"], ["cust", "By Customer"],
+  ["sup", "By Supplier"], ["day", "By Day"]] as const;
 const inr = (n: number) => "₹" + Math.round(+n || 0).toLocaleString("en-IN");
 const mgn = (p: number, r: number) => (r > 0 ? (p / r * 100).toFixed(1) + "%" : "—");
-const TABLE_CAP = 100;          // rows rendered in table; full list always in CSV
-const INV_PAGE = 50;            // invoice table page size
+const TABLE_CAP = 100;
+const INV_PAGE = 50;
 
 type Agg = { rev: number; cogs: number; qty: number; n: number; label: string; extra?: string };
 function bump(m: Map<string, Agg>, key: string, label: string,
@@ -24,25 +26,47 @@ function bump(m: Map<string, Agg>, key: string, label: string,
   m.set(key, a);
 }
 
-export default async function ReportsPage({ searchParams }: { searchParams: Promise<{ tab?: string; from?: string; to?: string; v?: string; q?: string; pg?: string }> }) {
-  await requireStaff();
+export default async function ReportsPage({ searchParams }: {
+  searchParams: Promise<{ tab?: string; from?: string; to?: string; v?: string;
+    q?: string; pg?: string; size?: string; item?: string; n?: string }> }) {
+  const s = await requireStaff();
   const sp = await searchParams;
-  const tab = sp.tab ?? "stock";
+  const sb = await createClient();
+
+  // ── canonical params ──
+  const tab = ["stock", "out", "gst", "pnl", "mv"].includes(sp.tab || "") ? sp.tab! : "stock";
   const to = sp.to || new Date().toISOString().slice(0, 10);
   const from = sp.from || new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
-  const pnlView = sp.v ?? "sum";
+  const pnlView = (PNL_VIEWS.map(v => v[0]).includes(sp.v || "") ? sp.v : "sum")!;
   const q = (sp.q || "").trim();
+  const size = Math.min(200, Math.max(10, +(sp.size || 25) || 25));
   const pg = Math.max(1, +(sp.pg || 1) || 1);
+  const itemId = sp.item || "";
+  const nLimit = Math.min(100, Math.max(1, +(sp.n || 10) || 10));
 
-  const sb = await createClient();
+  // ONE link builder — every link/form derives from this; dates are never dropped
+  const qlink = (over: Record<string, string | number | undefined>) => {
+    const params = new URLSearchParams({ tab, from, to });
+    if (tab === "pnl") params.set("v", pnlView);
+    if (tab === "mv") { if (itemId) params.set("item", itemId); params.set("n", String(nLimit)); }
+    if (q) params.set("q", q);
+    if (size !== 25) params.set("size", String(size));
+    for (const [k, v] of Object.entries(over)) {
+      if (v === undefined || v === "") params.delete(k); else params.set(k, String(v));
+    }
+    return `/erp/reports?${params.toString()}`;
+  };
+
   const [{ data: items }, { data: parties }, { data: vs }, { data: expenses },
     { data: cats }, { data: brands }] = await Promise.all([
-    sb.from("items").select("*"),
-    sb.from("parties").select("*"),
-    sb.from("vouchers").select("*"),
-    sb.from("expenses").select("head,amount,date").gte("date", from).lte("date", to),
-    sb.from("categories").select("id,name"),
-    sb.from("brands").select("id,name"),
+    sb.from("items").select("id,name,sku,cat_id,sub_id,brand_id,cost")
+      .eq("tenant_id", s.tenantId).order("name"),
+    sb.from("parties").select("*").eq("tenant_id", s.tenantId),
+    sb.from("vouchers").select("*").eq("tenant_id", s.tenantId),
+    sb.from("expenses").select("head,amount,date").eq("tenant_id", s.tenantId)
+      .gte("date", from).lte("date", to),
+    sb.from("categories").select("id,name").eq("tenant_id", s.tenantId),
+    sb.from("brands").select("id,name").eq("tenant_id", s.tenantId),
   ]);
   const V = (vs ?? []) as unknown as Voucher[];
   const Vwin = V.filter(v => v.date >= from && v.date <= to);
@@ -51,127 +75,147 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const IT = (items ?? []) as any[];
   const EX = (expenses ?? []) as { head: string; amount: number; date: string }[];
 
-  const qlink = (over: Record<string, string | number | undefined>) => {
-    const params = new URLSearchParams({ tab, from, to });
-    if (tab === "pnl") params.set("v", pnlView);
-    if (tab === "pnl" && pnlView === "inv" && q) params.set("q", q);
-    for (const [k, v] of Object.entries(over)) {
-      if (v === undefined || v === "") params.delete(k); else params.set(k, String(v));
-    }
-    return `/erp/reports?${params.toString()}`;
-  };
-
   return (
     <>
-      <div className="tool">
+      {/* ── toolbar: tabs + dates (form carries tab/v/item/n via hidden inputs) ── */}
+      <div className="tool" style={{ flexWrap: "wrap" }}>
         {TABS.map(([k, l]) => (
           <Link key={k} className={"fchip" + (tab === k ? " on" : "")}
-            href={`/erp/reports?tab=${k}&from=${from}&to=${to}`}>{l}</Link>
-        ))}
-        <form method="get" style={{ display: "flex", gap: 6 }}>
+            href={qlink({ tab: k, pg: 1 })}>{l}</Link>))}
+        <form method="get" action="/erp/reports"
+          style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           <input type="hidden" name="tab" value={tab} />
           {tab === "pnl" && <input type="hidden" name="v" value={pnlView} />}
+          {tab === "mv" && <input type="hidden" name="item" value={itemId} />}
+          {tab === "mv" && <input type="hidden" name="n" value={String(nLimit)} />}
+          <label className="mut" style={{ fontSize: 12 }}>From</label>
           <input className="inp mono" type="date" name="from" defaultValue={from} style={{ width: 135 }} />
+          <label className="mut" style={{ fontSize: 12 }}>To</label>
           <input className="inp mono" type="date" name="to" defaultValue={to} style={{ width: 135 }} />
-          <button className="btn sm">Go</button>
+          <button className="btn sm" type="submit">Go</button>
+          {(from !== new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10) ||
+            to !== new Date().toISOString().slice(0, 10)) && (
+            <Link className="btn sm" href={qlink({ from: "", to: "", pg: 1 })}>✕ dates</Link>)}
         </form>
       </div>
 
       {tab === "stock" && (() => {
-        const I = items ?? [];
+        const I = IT;
         return (
           <div className="panel">
             <div className="ph"><h3>Stock valuation</h3>
               <CsvBtn name="stock.csv" rows={[["Item", "SKU", "Stock", "Cost", "Value"],
-                ...I.map(i => [i.name, i.sku, i.stock, i.cost, Math.round(i.stock * i.cost)])]} />
+                ...I.map((i: any) => [i.name, i.sku, i.stock ?? 0, i.cost ?? 0,
+                  Math.round((i.stock ?? 0) * (i.cost ?? 0))])]} />
             </div>
             <div className="tblw"><table className="t">
               <thead><tr><th>Item</th><th className="num">Stock</th><th className="num">Cost</th>
                 <th className="num">Value</th><th>Status</th></tr></thead>
               <tbody>
-                {I.map((i, ix) => (
+                {I.map((i: any, ix: number) => (
                   <tr key={ix}>
                     <td><b>{i.name}</b></td>
-                    <td className="num">{i.stock}</td>
+                    <td className="num">{i.stock ?? 0}</td>
                     <td className="num">{inr(i.cost)}</td>
-                    <td className="num">{inr(i.stock * i.cost)}</td>
-                    <td><span className={"chip " + (i.stock <= 0 ? "red" : i.stock <= i.low ? "amb" : "grn")}>
-                      {i.stock <= 0 ? "out" : i.stock <= i.low ? "low" : "ok"}</span></td>
+                    <td className="num">{inr((i.stock ?? 0) * (i.cost ?? 0))}</td>
+                    <td><span className={"chip " + ((i.stock ?? 0) <= 0 ? "red" : (i.stock ?? 0) <= (i.low ?? 0) ? "amb" : "grn")}>
+                      {(i.stock ?? 0) <= 0 ? "out" : (i.stock ?? 0) <= (i.low ?? 0) ? "low" : "ok"}</span></td>
                   </tr>))}
                 {!I.length && <tr><td colSpan={5}><div className="empty">No items yet.</div></td></tr>}
               </tbody>
-              <tfoot><tr className="tfo"><td colSpan={3}>Total at cost</td>
-                <td className="num">{inr(I.reduce((t, i) => t + i.stock * i.cost, 0))}</td><td /></tr></tfoot>
             </table></div>
           </div>
         );
       })()}
 
       {tab === "out" && (() => {
-        const rows = P.map(p => ({ p, b: partyBalance(Vbal, p) })).filter(r => Math.abs(r.b) >= .01);
+        const ql = q.toLowerCase();
+        const rows = P.map(p => ({ p, b: partyBalance(Vbal, p) }))
+          .filter(r => Math.abs(r.b) >= .01)
+          .filter(r => !ql || r.p.name.toLowerCase().includes(ql) ||
+            r.p.type.toLowerCase().includes(ql) || (r.p.mobile ?? "").includes(ql))
+          .sort((a, b) => Math.abs(b.b) - Math.abs(a.b));
         const totThey = Math.round(rows.reduce((t, r) => t + Math.max(r.b, 0), 0) * 100) / 100;
         const totWe = Math.round(rows.reduce((t, r) => t + Math.max(-r.b, 0), 0) * 100) / 100;
         const net = Math.round((totThey - totWe) * 100) / 100;
         const health = net > 0.5
-          ? { cls: "grn", tag: "HEALTHY", msg: "Receivables exceed payables — more money is coming to you than going out." }
+          ? { cls: "grn", tag: "HEALTHY", msg: "Receivables exceed payables." }
           : net < -0.5
-          ? { cls: "red", tag: "STRAINED", msg: "Payables exceed receivables — you owe suppliers more than customers owe you. Collect faster or slow payments." }
-          : { cls: "", tag: "BALANCED", msg: "Receivables and payables are roughly equal." };
+          ? { cls: "red", tag: "STRAINED", msg: "Payables exceed receivables — collect faster." }
+          : { cls: "", tag: "BALANCED", msg: "Roughly equal." };
+        const pages = Math.max(1, Math.ceil(rows.length / size));
+        const curPg = Math.min(pg, pages);
+        const view = rows.slice((curPg - 1) * size, curPg * size);
         return (
           <div className="panel">
-            <div className="ph"><h3>Who owes what</h3>
+            <div className="ph"><h3>Who owes what <span className="mut" style={{ fontSize: 12 }}>as of {to}</span></h3>
               <CsvBtn name="outstanding.csv" rows={[
                 ["Party", "Type", "They owe", "We owe"],
                 ...rows.map(r => [r.p.name, r.p.type, r.b > 0 ? Math.round(r.b) : "", r.b < 0 ? Math.round(-r.b) : ""]),
-                ["", "", "", ""],
                 ["TOTAL", "", Math.round(totThey), Math.round(totWe)],
-                ["NET (They − We)", "", Math.round(net), ""],
               ]} />
             </div>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
-              padding: "12px 16px", borderBottom: "1px solid var(--line)" }}>
-              <div style={{ flex: "1 1 160px" }}>
-                <div className="mut" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: ".1em" }}>They owe us</div>
-                <b style={{ font: "600 22px var(--font-disp)", color: "var(--green, #1a7f37)" }}>{inr(totThey)}</b>
-              </div>
-              <div style={{ flex: "1 1 160px" }}>
-                <div className="mut" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: ".1em" }}>We owe</div>
-                <b style={{ font: "600 22px var(--font-disp)", color: "var(--red, #c62828)" }}>{inr(totWe)}</b>
-              </div>
-              <div style={{ flex: "1 1 160px" }}>
-                <div className="mut" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: ".1em" }}>Net position (they − we)</div>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "12px 16px",
+              borderBottom: "1px solid var(--line)" }}>
+              <div style={{ flex: "1 1 150px" }}>
+                <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>They owe us</div>
+                <b style={{ font: "600 22px var(--font-disp)", color: "var(--green, #1a7f37)" }}>{inr(totThey)}</b></div>
+              <div style={{ flex: "1 1 150px" }}>
+                <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>We owe</div>
+                <b style={{ font: "600 22px var(--font-disp)", color: "var(--red, #c62828)" }}>{inr(totWe)}</b></div>
+              <div style={{ flex: "1 1 150px" }}>
+                <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>Net</div>
                 <b style={{ font: "600 22px var(--font-disp)",
                   color: net >= 0 ? "var(--green, #1a7f37)" : "var(--red, #c62828)" }}>
-                  {net >= 0 ? "+" : "−"}{inr(Math.abs(net))}</b>
-              </div>
-              <div style={{ flex: "2 1 260px", display: "flex", flexDirection: "column",
+                  {net >= 0 ? "+" : "−"}{inr(Math.abs(net))}</b></div>
+              <div style={{ flex: "2 1 240px", display: "flex", flexDirection: "column",
                 justifyContent: "center", gap: 4 }}>
                 <span className={"chip " + health.cls} style={{ alignSelf: "flex-start" }}>{health.tag}</span>
-                <span className="mut" style={{ fontSize: 12 }}>{health.msg}</span>
-              </div>
+                <span className="mut" style={{ fontSize: 12 }}>{health.msg}</span></div>
             </div>
-            <div className="tblw"><table className="t">
+            <form method="get" action="/erp/reports" style={{ display: "flex", gap: 6,
+              padding: "10px 16px 0", flexWrap: "wrap" }}>
+              <input type="hidden" name="tab" value="out" />
+              <input type="hidden" name="from" value={from} />
+              <input type="hidden" name="to" value={to} />
+              <input type="hidden" name="size" value={String(size)} />
+              <input className="inp" name="q" defaultValue={q}
+                placeholder="Search party / type / mobile…" style={{ maxWidth: 240 }} />
+              <button className="btn sm" type="submit">Search</button>
+              {q && <Link className="btn sm" href={qlink({ q: "", pg: 1 })}>✕ Clear</Link>}
+            </form>
+            <div className="tblw" style={{ marginTop: 8 }}><table className="t">
               <thead><tr><th>Party</th><th>Type</th><th className="num">They owe</th><th className="num">We owe</th></tr></thead>
               <tbody>
-                {rows.map((r, i) => (
-                  <tr key={i}>
+                {view.map((r, i) => (
+                  <tr key={r.p.id}>
                     <td><b>{r.p.name}</b></td>
                     <td><span className="chip">{r.p.type}</span></td>
-                                        <td className="num pos">{r.b > 0 ? inr(r.b) : ""}</td>
+                    <td className="num pos">{r.b > 0 ? inr(r.b) : ""}</td>
                     <td className="num neg">{r.b < 0 ? inr(-r.b) : ""}</td>
-                    </tr>))}
-                {!rows.length && <tr><td colSpan={4}><div className="empty">All settled.</div></td></tr>}
+                  </tr>))}
+                {!view.length && <tr><td colSpan={4}><div className="empty">All settled.</div></td></tr>}
               </tbody>
               <tfoot>
-                               <tr className="tfo"><td colSpan={2}>Totals</td>
-                  <td className="num pos">{inr(totThey)}</td><td className="num neg">{inr(totWe)}</td></tr>  <tr className="tfo"><td colSpan={2}>Net (they owe − we owe)</td>
+                <tr className="tfo"><td colSpan={2}>Totals</td>
+                  <td className="num pos">{inr(totThey)}</td><td className="num neg">{inr(totWe)}</td></tr>
+                <tr className="tfo"><td colSpan={2}>Net (they − we)</td>
                   <td className="num" colSpan={2}>{net >= 0 ? "+" : "−"}{inr(Math.abs(net))}</td></tr>
               </tfoot>
             </table></div>
-            <p className="mut" style={{ fontSize: 11.5, padding: "8px 12px 12px" }}>
-              Lifetime balances as of {to} (opening balance + all vouchers, including party journals).
-              A supplier under “They owe” means their account is in debit — check their Party Ledger.
-            </p>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "10px 16px 12px" }}>
+              <span className="mut" style={{ fontSize: 12 }}>
+                {rows.length ? `Showing ${(curPg - 1) * size + 1}–${Math.min(curPg * size, rows.length)} of ${rows.length}` : "Nothing to show"}
+              </span>
+              <div style={{ display: "flex", gap: 6 }}>
+                <Link className={"btn sm" + (curPg <= 1 ? " dis" : "")}
+                  href={qlink({ pg: curPg > 1 ? curPg - 1 : undefined })}>← Prev</Link>
+                <span className="mut" style={{ fontSize: 12 }}>Page {curPg} / {pages}</span>
+                <Link className={"btn sm" + (curPg >= pages ? " dis" : "")}
+                  href={qlink({ pg: curPg < pages ? curPg + 1 : undefined })}>Next →</Link>
+              </div>
+            </div>
           </div>
         );
       })()}
@@ -191,7 +235,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         const net = oT - inTax;
         return (
           <div className="panel">
-            <div className="ph"><h3>GST summary</h3>
+            <div className="ph"><h3>GST summary <span className="mut" style={{ fontSize: 12 }}>{from} → {to}</span></h3>
               <span className={"chip " + (net > 0 ? "red" : "grn")}>
                 {net > 0 ? "Net payable " + inr(net) : "Credit carried " + inr(-net)}</span>
             </div>
@@ -217,33 +261,175 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         );
       })()}
 
+      {tab === "mv" && (() => {
+        // ── ITEM MOVEMENT: last N purchases + last N sales for ONE item ──
+        const item = IT.find(x => x.id === itemId);
+        const pu: { no: string; date: string; qty: number; rate: number; party: string }[] = [];
+        const so: { no: string; date: string; qty: number; rate: number; party: string; ret: boolean }[] = [];
+        if (itemId) {
+          const chrono = [...V].sort((a, b) => a.date.localeCompare(b.date)); // newest last → pop newest first
+          const pn = P.reduce<Map<string, string>>((m, p) => m.set(p.id, p.name), new Map());
+          for (const v of chrono.reverse()) {
+            for (const l of (v.lines ?? []) as any[]) {
+              if (l.item_id !== itemId) continue;
+              if ((v.type === "purchase") && pu.length < nLimit)
+                pu.push({ no: v.no, date: v.date, qty: +l.qty, rate: +l.rate,
+                  party: pn.get(v.party_id ?? "") ?? "Cash" });
+              if ((v.type === "sale" || v.type === "salret") && so.length < nLimit)
+                so.push({ no: v.no, date: v.date, qty: +l.qty, rate: +l.rate,
+                  party: pn.get(v.party_id ?? "") ?? "Counter",
+                  ret: v.type === "salret" });
+            }
+          }
+        }
+        const lastPu = pu[0] ?? null, lastSo = so.filter(x => !x.ret)[0] ?? null;
+        const margin = lastPu && lastSo ? Math.round((lastSo.rate - lastPu.rate) * 100) / 100 : null;
+
+        return (
+          <div className="panel">
+            <div className="ph">
+              <h3>Item movement — purchase &amp; sales trail</h3>
+              <span className="mut" style={{ fontSize: 12 }}>all-time · latest {nLimit} each side</span>
+            </div>
+
+            {/* picker + limit */}
+            <form method="get" action="/erp/reports" style={{ display: "flex", gap: 8,
+              flexWrap: "wrap", alignItems: "center", padding: "12px 16px 0" }}>
+              <input type="hidden" name="tab" value="mv" />
+              <label className="fl">Item</label>
+              <select className="inp" name="item" defaultValue={itemId} style={{ maxWidth: 340 }} required>
+                <option value="">Select an item…</option>
+                {IT.map((i: any) => (
+                  <option key={i.id} value={i.id}>{i.name}{i.sku ? ` · ${i.sku}` : ""}</option>))}
+              </select>
+              <label className="fl">Entries</label>
+              <select className="inp mono" name="n" defaultValue={String(nLimit)} style={{ width: 90 }}>
+                {[5, 10, 20, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <button className="btn pri sm" type="submit">Show</button>
+            </form>
+
+            {!itemId && <div className="empty" style={{ margin: 14 }}>
+              Pick an item above — its latest purchases (supplier, rate) and sales
+              (customer, rate) appear side by side.</div>}
+
+            {item && (
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "14px 16px 4px" }}>
+                <div style={{ flex: "1 1 200px" }}>
+                  <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>Item</div>
+                  <b style={{ fontSize: 15 }}>{item.name}</b>
+                  {item.sku && <div className="mut mono" style={{ fontSize: 11 }}>{item.sku}</div>}
+                </div>
+                <div style={{ flex: "1 1 150px" }}>
+                  <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>Last purchase</div>
+                  <b style={{ fontSize: 15 }}>{lastPu ? inr(lastPu.rate) : "—"}</b>
+                  {lastPu && <div className="mut" style={{ fontSize: 11 }}>{lastPu.party} · {lastPu.date}</div>}
+                </div>
+                <div style={{ flex: "1 1 150px" }}>
+                  <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>Last sold</div>
+                  <b style={{ fontSize: 15 }}>{lastSo ? inr(lastSo.rate) : "—"}</b>
+                  {lastSo && <div className="mut" style={{ fontSize: 11 }}>{lastSo.party} · {lastSo.date}</div>}
+                </div>
+                <div style={{ flex: "1 1 150px" }}>
+                  <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>Implied margin</div>
+                  {margin !== null
+                    ? <b style={{ fontSize: 15, color: margin >= 0 ? "var(--green, #1a7f37)" : "var(--red, #c62828)" }}>
+                        {inr(margin)} {lastPu && lastSo && lastSo.rate > 0
+                          ? `(${mgn(lastSo.rate - lastPu.rate, lastSo.rate)})` : ""}</b>
+                    : <b style={{ fontSize: 15 }}>—</b>}
+                  <div className="mut" style={{ fontSize: 11 }}>last buy vs last sale</div>
+                </div>
+                {item.cost != null && lastPu && item.cost !== lastPu.rate && (
+                  <div style={{ flex: "1 1 150px" }}>
+                    <div className="mut" style={{ fontSize: 10, textTransform: "uppercase" }}>Master cost</div>
+                    <b style={{ fontSize: 15 }}>{inr(item.cost)}</b>
+                    <span className="chip amb" style={{ marginLeft: 6 }}
+                      title="Item master cost differs from the latest purchase bill">drift</span>
+                  </div>)}
+              </div>)}
+
+            {itemId && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(340px,1fr))",
+                gap: 12, padding: "14px 16px 16px" }}>
+                {/* purchases */}
+                <div style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                    <b>🛒 Last purchases ({pu.length})</b>
+                    <CsvBtn name="item-purchases.csv" rows={[["Bill", "Date", "Supplier", "Qty", "Rate"],
+                      ...pu.map(p => [p.no, p.date, p.party, p.qty, p.rate])]} />
+                  </div>
+                  <table className="t" style={{ fontSize: 12 }}>
+                    <thead><tr><th>Bill</th><th>Date</th><th>Supplier</th>
+                      <th className="num">Qty</th><th className="num">Rate</th></tr></thead>
+                    <tbody>
+                      {pu.map((p, i) => (
+                        <tr key={p.no + i}>
+                          <td className="mono" style={{ fontSize: 11 }}>{p.no}</td>
+                          <td style={{ fontSize: 11 }}>{p.date}</td>
+                          <td style={{ fontSize: 11.5 }}>{p.party}</td>
+                          <td className="num">{p.qty}</td>
+                          <td className="num" style={{ fontWeight: i === 0 ? 700 : 400 }}>
+                            {inr(p.rate)}{i === 0 &&
+                              <span className="chip grn" style={{ fontSize: 9, marginLeft: 4 }}>last</span>}
+                          </td>
+                        </tr>))}
+                      {!pu.length && <tr><td colSpan={5}><div className="empty">No purchases recorded.</div></td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+                {/* sales */}
+                <div style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                    <b>🧾 Last sales ({so.length})</b>
+                    <CsvBtn name="item-sales.csv" rows={[["Invoice", "Date", "Customer", "Qty", "Rate"],
+                      ...so.map(p => [p.no, p.date, p.party, p.qty, p.rate])]} />
+                  </div>
+                  <table className="t" style={{ fontSize: 12 }}>
+                    <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th>
+                      <th className="num">Qty</th><th className="num">Rate</th></tr></thead>
+                    <tbody>
+                      {so.map((p, i) => (
+                        <tr key={p.no + i}>
+                          <td className="mono" style={{ fontSize: 11 }}>{p.no}
+                            {p.ret && <span className="chip red" style={{ fontSize: 9, marginLeft: 4 }}>ret</span>}</td>
+                          <td style={{ fontSize: 11 }}>{p.date}</td>
+                          <td style={{ fontSize: 11.5 }}>{p.party}</td>
+                          <td className="num">{p.ret ? `−${p.qty}` : p.qty}</td>
+                          <td className="num" style={{ fontWeight: i === 0 && !p.ret ? 700 : 400 }}>
+                            {inr(p.rate)}{i === 0 && !p.ret &&
+                              <span className="chip grn" style={{ fontSize: 9, marginLeft: 4 }}>last</span>}
+                          </td>
+                        </tr>))}
+                      {!so.length && <tr><td colSpan={5}><div className="empty">No sales recorded.</div></td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </div>)}
+          </div>
+        );
+      })()}
+
       {tab === "pnl" && (() => {
         const nameOf = (id: unknown) => P.find(x => x.id === id)?.name ?? "Counter / Cash";
         const catName = new Map<string, string>((cats ?? []).map((c: any) => [String(c.id), c.name]));
         const brandName = new Map<string, string>((brands ?? []).map((b: any) => [String(b.id), b.name]));
         const catLabelOf = (it: any) => {
           const c = catName.get(String(it?.cat_id ?? "")) ?? "Uncategorised";
-          const s = it?.sub_id ? catName.get(String(it.sub_id)) : null;
-          return s && s !== c ? `${c} › ${s}` : c;
+          const s2 = it?.sub_id ? catName.get(String(it.sub_id)) : null;
+          return s2 && s2 !== c ? `${c} › ${s2}` : c;
         };
-        const catById = new Map<string, string>();
-        const brandById = new Map<string, string>();
+        const catById = new Map<string, string>(), brandById = new Map<string, string>();
         IT.forEach(i => {
           catById.set(i.id, catLabelOf(i));
           brandById.set(i.id, brandName.get(String(i?.brand_id ?? "")) ?? "Unbranded");
         });
-
         const lineNetRaw = (l: any) =>
           l._net != null ? +l._net : Math.round(l.qty * l.rate * (1 - (l.disc || 0) / 100) * 100) / 100;
 
-        const mItem = new Map<string, Agg>();
-        const mCat = new Map<string, Agg>();
-        const mBrand = new Map<string, Agg>();
-        const mCust = new Map<string, Agg>();
-        const mDay = new Map<string, Agg>();
-        const mSup = new Map<string, Agg>();
+        const mItem = new Map<string, Agg>(), mCat = new Map<string, Agg>(),
+          mBrand = new Map<string, Agg>(), mCust = new Map<string, Agg>(),
+          mDay = new Map<string, Agg>(), mSup = new Map<string, Agg>();
         let rev = 0, cogs = 0, invN = 0;
-
         type Inv = { id: string; no: string; date: string; party: string; ret: boolean;
           rev: number; cogs: number; p: number };
         const invRows: Inv[] = [];
@@ -332,7 +518,6 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         const topCust = custRows[0], topCat = catRows[0];
         const bestDay = [...dayRows].sort((a, b) => b.rev - b.cogs - (a.rev - a.cogs))[0];
 
-        /* chart data (serializable → modal) */
         const dayAsc = [...dayRows].sort((a, b) => a.label.localeCompare(b.label));
         const chartDaily = dayAsc.map(d => ({ label: d.label, rev: d.rev, cogs: d.cogs, net: d.net }));
         const chartItems = itemRows.slice(0, 12).map(a => ({ label: a.label, value: a.p }));
@@ -347,7 +532,6 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           ...invByProfit.slice(-5).filter(r => r.p < 0).map(r => ({ label: r.no, value: r.p })),
         ].filter((x, i, arr) => arr.findIndex(y => y.label === x.label) === i);
 
-        /* invoice view: search + pagination (scales to thousands) */
         const ql = q.toLowerCase();
         const invFiltered = ql
           ? invRows.filter(r => (r.no + " " + r.party).toLowerCase().includes(ql))
@@ -356,31 +540,45 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         const pgCur = Math.min(pg, invPages);
         const invPage = invFiltered.slice((pgCur - 1) * INV_PAGE, pgCur * INV_PAGE);
 
-        /* caps for dimension tables */
+        const dimSearch = <T extends { label: string }>(rows: T[]) => ql
+          ? rows.filter(a => a.label.toLowerCase().includes(ql)) : rows;
         const capNote = (n: number) => n > TABLE_CAP
           ? <p className="mut" style={{ fontSize: 11.5, padding: "6px 12px" }}>
-              Showing top {TABLE_CAP} by profit of {n.toLocaleString("en-IN")} — the full list is in the CSV.</p>
+              Showing top {TABLE_CAP} by profit of {n.toLocaleString("en-IN")} — full list in CSV.</p>
           : null;
-        const itemTbl = itemRows.slice(0, TABLE_CAP);
-        const catTbl = catRows.slice(0, TABLE_CAP);
-        const brandTbl = brandRows.slice(0, TABLE_CAP);
-        const custTbl = custRows.slice(0, TABLE_CAP);
+        const itemTbl = dimSearch(itemRows).slice(0, TABLE_CAP);
+        const catTbl = dimSearch(catRows).slice(0, TABLE_CAP);
+        const brandTbl = dimSearch(brandRows).slice(0, TABLE_CAP);
+        const custTbl = dimSearch(custRows).slice(0, TABLE_CAP);
 
         return (
           <div className="panel">
             <div className="ph">
-              <h3>Profit &amp; Loss</h3>
-              <span className="mut" style={{ fontSize: 12 }}>{from} → {to}</span>
+              <h3>Profit &amp; Loss <span className="mut" style={{ fontSize: 12 }}>{from} → {to}</span></h3>
             </div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", padding: "10px 16px 0" }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center",
+              padding: "10px 16px 0" }}>
               {PNL_VIEWS.map(([k, l]) => (
                 <Link key={k} className={"fchip" + (pnlView === k ? " on" : "")}
-                  href={`/erp/reports?tab=pnl&v=${k}&from=${from}&to=${to}`}>{l}</Link>
-              ))}
+                  href={qlink({ v: k, pg: 1 })}>{l}</Link>))}
               <span style={{ flex: 1 }} />
               <ChartsModal view={pnlView} daily={chartDaily} items={chartItems} cats={chartCats}
                 brands={chartBrands} custs={chartCust} sups={chartSup} invs={chartInv} />
             </div>
+
+            <form method="get" action="/erp/reports" style={{ display: "flex", gap: 6,
+              padding: "10px 16px 0", flexWrap: "wrap" }}>
+              <input type="hidden" name="tab" value="pnl" />
+              <input type="hidden" name="v" value={pnlView} />
+              <input type="hidden" name="from" value={from} />
+              <input type="hidden" name="to" value={to} />
+              <input type="hidden" name="size" value={String(size)} />
+              <input className="inp" name="q" defaultValue={q}
+                placeholder={`Search ${pnlView === "inv" ? "invoice no / party" : "name"}…`}
+                style={{ maxWidth: 230 }} />
+              <button className="btn sm" type="submit">Search</button>
+              {q && <Link className="btn sm" href={qlink({ q: "", pg: 1 })}>✕ Clear</Link>}
+            </form>
 
             {pnlView === "sum" && (
               <div className="pb">
@@ -436,30 +634,15 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                 )}
 
                 <p className="mut" style={{ fontSize: 11.5, marginTop: 12 }}>
-                  GST excluded. Bill discounts allocated proportionally to lines, so every dimension view
-                  reconciles to Gross profit. Click 📈 Charts above for trend lines.
-                </p>
+                  GST excluded. Bill discounts allocated proportionally, so every dimension view
+                  reconciles to Gross profit. New: the <b>Item Movement</b> tab traces any item's
+                  last purchases &amp; sales.</p>
               </div>
             )}
 
             {pnlView === "inv" && (
               <>
-                <div style={{ display: "flex", gap: 8, alignItems: "center",
-                  flexWrap: "wrap", padding: "10px 16px 0" }}>
-                  <form method="get" style={{ display: "flex", gap: 6 }}>
-                    <input type="hidden" name="tab" value="pnl" />
-                    <input type="hidden" name="v" value="inv" />
-                    <input type="hidden" name="from" value={from} />
-                    <input type="hidden" name="to" value={to} />
-                    <input className="inp" name="q" defaultValue={q} placeholder="Search invoice no / party…"
-                      style={{ maxWidth: 230 }} />
-                    <button className="btn sm">Search</button>
-                    {q && <Link className="btn sm" href={qlink({ q: undefined, pg: undefined })}>✕</Link>}
-                  </form>
-                  <span className="mut" style={{ fontSize: 12 }}>
-                    {invFiltered.length.toLocaleString("en-IN")} document{invFiltered.length === 1 ? "" : "s"}
-                  </span>
-                  <span style={{ flex: 1 }} />
+                <div style={{ display: "flex", justifyContent: "flex-end", padding: "8px 16px 0" }}>
                   <CsvBtn name="pnl-by-invoice.csv" rows={[["Date", "Invoice", "Party", "Type", "Revenue", "COGS", "Profit", "Margin"],
                     ...invFiltered.map(r => [r.date, r.no, r.party, r.ret ? "return" : "invoice",
                       Math.round(r.rev), Math.round(r.cogs), r.p, mgn(r.p, r.rev)])]} />
@@ -497,11 +680,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                   </span>
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                     <Link className={"btn sm" + (pgCur <= 1 ? " dis" : "")}
-                      aria-disabled={pgCur <= 1}
                       href={qlink({ pg: pgCur > 1 ? pgCur - 1 : undefined })}>← Prev</Link>
                     <span className="mut" style={{ fontSize: 12 }}>Page {pgCur} / {invPages}</span>
                     <Link className={"btn sm" + (pgCur >= invPages ? " dis" : "")}
-                      aria-disabled={pgCur >= invPages}
                       href={qlink({ pg: pgCur < invPages ? pgCur + 1 : undefined })}>Next →</Link>
                   </div>
                 </div>
