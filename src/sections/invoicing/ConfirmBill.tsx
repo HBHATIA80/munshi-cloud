@@ -4,20 +4,19 @@ import { useEffect, useRef } from "react";
 const inr = (n: number) => "₹" + Math.round(+n || 0).toLocaleString("en-IN");
 
 export function ConfirmBill({ kind, partyLabel, partyName, itemsCount, qtyTotal,
-  taxable, gst, inter, total, paidN, due, payMode, saving, onConfirm, onCancel }: {
+  taxable, gst, inter, total, paidN, due, payMode, shared, saving, onConfirm, onCancel }: {
   kind: "sale" | "purchase";
   partyLabel: string; partyName: string | null;
   itemsCount: number; qtyTotal: number;
   taxable: number; gst: number; inter: boolean;
   total: number; paidN: number; due: number; payMode: string;
+  shared?: boolean;
   saving: boolean; onConfirm: () => void; onCancel: () => void;
 }) {
   const btn = useRef<HTMLButtonElement>(null);
   useEffect(() => { btn.current?.focus(); }, []);
   useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
-    };
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onCancel(); };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [onCancel]);
@@ -50,6 +49,11 @@ export function ConfirmBill({ kind, partyLabel, partyName, itemsCount, qtyTotal,
         <div className="led-row">
           <span>{creditLabel}</span>
           <b className="neg">{inr(due)}</b></div>
+
+        {kind === "sale" && shared !== undefined && (
+          <div className="led-row">
+            <span>Send to shopkeeper portal</span>
+            <b>{shared ? "Yes" : "No"}</b></div>)}
 
         <div style={{ display: "flex", gap: 9, justifyContent: "flex-end", marginTop: 16 }}>
           <button type="button" className="btn" onClick={onCancel}>Cancel (Esc)</button>

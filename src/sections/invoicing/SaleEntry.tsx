@@ -1,7 +1,8 @@
 ﻿"use client";
 import { Fragment, useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { saveSaleAction, serialsForItemAction, purchaseHistoryAction } from "./actions";
+import { saveSaleAction, serialsForItemAction, purchaseHistoryAction, shareVoucherAction } from "./actions";
+import { createClient } from "@/lib/supabase/client";
 import { LiveSearch } from "@/components/LiveSearch";
 import { SerialInput } from "./SerialInput";
 import { LastPurchaseChip, PriceCompare } from "./PriceIntel";
@@ -9,7 +10,8 @@ import { ConfirmBill } from "./ConfirmBill";
 
 type Item = { hsn: string; id: string; name: string; sku: string; unit: string; gst: number;
   cost: number; pr: number; ps: number; stock: number; has_serial: boolean };
-type Party = { id: string; name: string; type: string; state: string | null };
+type Party = { id: string; name: string; type: string; state: string | null;
+  user_id: string | null };
 type Line = { item_id: string; name: string; unit: string; hsn: string;
   qty: number; rate: number; disc: number; gst: number; cost: number; serials?: string[] };
 type PU = { no: string; date: string; qty: number; rate: number; supplier: string };
@@ -25,8 +27,8 @@ function autoRef() {
   return "REF-" + ymd + "-" + Math.random().toString(36).slice(2, 6).toUpperCase();
 }
 
-export function SaleEntry({ items, parties, homeState }: {
-  items: Item[]; parties: Party[]; homeState: string }) {
+export function SaleEntry({ items, parties, homeState, tenantId }: {
+  items: Item[]; parties: Party[]; homeState: string; tenantId: string }) {
   const [lines, setLines] = useState<Line[]>([]);
   const [partyId, setPartyId] = useState("");
   const [isGst, setIsGst] = useState(false);
@@ -39,12 +41,19 @@ export function SaleEntry({ items, parties, homeState }: {
   const [hist, setHist] = useState<Record<string, PU[]>>({});
   const [compare, setCompare] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [sendToParty, setSendToParty] = useState(false);
+  const sbClient = useRef(createClient()).current;   // browser client, created once
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [err, submit, pending] = useActionState(async (_: string | null, fd: FormData) => {
     fd.set("lines", JSON.stringify(lines));
     const r = await saveSaleAction(fd);
     if (r.error) return r.error;
+    if (sendToParty && partyId) {
+      const { data: nv } = await sbClient.from("vouchers")
+        .select("id").eq("no", r.no!).eq("tenant_id", tenantId).maybeSingle();
+      if (nv) await shareVoucherAction(nv.id, true);
+    }
     router.push("/erp/sales?posted=" + encodeURIComponent(r.no!));
     return null;
   }, null);
@@ -52,6 +61,7 @@ export function SaleEntry({ items, parties, homeState }: {
   const party = parties.find(p => p.id === partyId);
   const inter = !!(party?.state && homeState && party.state !== homeState);
   const priceOf = (it: Item) => (party?.type === "shopkeeper" ? it.ps : it.pr);
+  const partyLinkedShopkeeper = !!party?.user_id && party?.type === "shopkeeper";
 
   const setL = (i: number, patch: Partial<Line>) =>
     setLines(ls => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
@@ -90,6 +100,9 @@ export function SaleEntry({ items, parties, homeState }: {
       const it = items.find(x => x.id === l.item_id);
       return it ? { ...l, rate: p2(it) } : l;
     }));
+    // reset sharing if the newly picked party can't receive it
+    const np2 = parties.find(p => p.id === id);
+    if (!(np2?.user_id && np2?.type === "shopkeeper")) setSendToParty(false);
   };
 
   const addLine = (goSearch = false) => {
@@ -335,6 +348,17 @@ export function SaleEntry({ items, parties, homeState }: {
                 <p className="neg" style={{ fontSize: 12, marginTop: 8 }}>
                   ⚠ Select the serial numbers for tracked items (qty per line) before saving.</p>)}
 
+              {partyLinkedShopkeeper && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8,
+                  padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 8,
+                  marginTop: 8 }}>
+                  <input type="checkbox" id="sendToParty" checked={sendToParty}
+                    onChange={e => setSendToParty(e.target.checked)}
+                    style={{ width: 17, height: 17 }} />
+                  <label htmlFor="sendToParty" style={{ fontSize: 12.5, cursor: "pointer" }}>
+                    📤 Send to shopkeeper — visible in their portal ledger</label>
+                </div>)}
+
               <div style={{ marginTop: 12, borderTop: "1px dashed var(--line)", paddingTop: 10 }}>
                 <label className="fl">Amount received now</label>
                 <input className="inp mono" type="number" min="0" max={total} step="0.01"
@@ -380,7 +404,9 @@ export function SaleEntry({ items, parties, homeState }: {
           partyLabel="Party" partyName={party?.name ?? null}
           itemsCount={lines.filter(l => l.item_id).length} qtyTotal={qtyTotal}
           taxable={taxable} gst={tax} inter={inter} total={total}
-          paidN={paidN} due={due} payMode={payMode} saving={pending}
+          paidN={paidN} due={due} payMode={payMode}
+          shared={partyLinkedShopkeeper ? sendToParty : undefined}
+          saving={pending}
           onConfirm={() => formRefEl.current?.requestSubmit()}
           onCancel={() => setConfirm(false)} />
       )}

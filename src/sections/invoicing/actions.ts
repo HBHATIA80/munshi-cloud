@@ -760,3 +760,14 @@ export async function editNoAction(fd: FormData): Promise<Res> {
     return { ok: true, no };
   } catch (e: any) { return { error: e.message }; }
 }
+/* ================= SHARE VOUCHER TO PARTY PORTAL (opt-in, per document) ================= */
+export async function shareVoucherAction(id: string, shared: boolean): Promise<Res> {
+  const { s, sb } = await staff();
+  if (!s.tenantId) return { error: "No tenant on session." };
+  const { error } = await sb.from("vouchers")
+    .update({ shared_with_party: shared })
+    .eq("id", id).eq("tenant_id", s.tenantId);
+  if (error) return { error: error.message };
+  revalidatePath("/erp/sales"); revalidatePath("/erp/purchreg"); revalidatePath("/erp/ledger");
+  return { ok: true };
+}

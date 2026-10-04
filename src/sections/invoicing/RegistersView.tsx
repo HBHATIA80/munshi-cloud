@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { deleteVoucherAction, getVoucherAction, editNoAction } from "./actions";
+import { deleteVoucherAction, getVoucherAction, editNoAction, shareVoucherAction } from "./actions";
 import { EditVoucher } from "./EditVoucher";
 import { UiModal } from "@/components/UiModal";
 
@@ -98,7 +98,7 @@ export function RegistersView({ rows, kind, editableNo, postedNo }: {
 
   return (
     <>
-      {/* success popup after posting (page passes ?posted=) */}
+      {/* success popup after posting */}
       <UiModal open={!!posted} kind="success"
         title={`${kindLabel} ${posted} saved`}
         message={"Stock and party ledgers have been updated automatically.\nYou can view or edit it from the register below."}
@@ -300,6 +300,7 @@ export function VoucherModal({ id, onClose }: { id: string; onClose: () => void 
     : v.type === "purret" ? "Debit Note"
     : v.type === "receipt" ? "Receipt Voucher"
     : v.type === "payment" ? "Payment Voucher" : String(v.type);
+  const canShare = isSale && !!party?.user_id && party?.type === "shopkeeper";
 
   return (
     <Shell onClose={onClose}>
@@ -451,7 +452,15 @@ export function VoucherModal({ id, onClose }: { id: string; onClose: () => void 
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8,
         marginTop: 16, paddingTop: 12, borderTop: "1px solid var(--line)", flexWrap: "wrap" }}>
         <Link className="btn" href={`/invoice/${v.id}`} target="_blank">⧉ Open / share page</Link>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {canShare && (
+            <button className="btn sm"
+              onClick={async () => {
+                const r = await shareVoucherAction(v.id, !v.shared_with_party);
+                if (r.error) window.alert(r.error); else location.reload();
+              }}>
+              {v.shared_with_party ? "👁 Shared with party ✓" : "🔒 Share with party"}
+            </button>)}
           <button className="btn" onClick={printV}>🖨 Print / PDF</button>
           <button className="btn pri" onClick={onClose}>Close</button>
         </div>

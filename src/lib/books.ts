@@ -33,6 +33,7 @@ export type Voucher = {
   mode: string;
   narr: string | null;
   lines: VLine[];
+  shared_with_party?: boolean;   // opt-in: visible in the party's portal ledger
 };
 
 export type Party = {
