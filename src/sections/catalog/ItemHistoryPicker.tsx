@@ -4,6 +4,11 @@ import { useRouter } from "next/navigation";
 
 type Item = { id: string; name: string; sku: string; cost: number };
 
+/* Hero item picker:
+   - Bold black suggestion text
+   - Loose matching: EVERY word typed must appear somewhere (name or SKU),
+     in any order — "vivo battery" matches "Battery … Vivo Y20"
+   - Arrow keys / Enter / Tab select; Esc closes */
 export function ItemHistoryPicker({ items, itemId, nLimit, view }: {
   items: Item[]; itemId: string; nLimit: number; view: string;
 }) {
@@ -14,13 +19,19 @@ export function ItemHistoryPicker({ items, itemId, nLimit, view }: {
   const router = useRouter();
 
   const selected = items.find(i => i.id === itemId) ?? null;
-  const fl = q.trim().toLowerCase();
-  const options = useMemo(() => (fl
-    ? items.filter(i => i.name.toLowerCase().includes(fl) ||
-        (i.sku ?? "").toLowerCase().includes(fl))
-    : items).slice(0, 10), [items, fl]);
 
-  useEffect(() => { setQ(""); setOpen(false); setHi(0); }, [itemId]);
+  const options = useMemo(() => {
+    const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    let base = items;
+    if (words.length) {
+      base = items.filter(i => {
+        const hay = (i.name + " " + (i.sku ?? "")).toLowerCase();
+        return words.every(w => hay.includes(w));
+      });
+    }
+    return base.slice(0, 10);
+  }, [items, q]);
+
   useEffect(() => { setHi(0); }, [q]);
   useEffect(() => {
     wrap.current?.querySelector<HTMLElement>(`[data-idx="${hi}"]`)
@@ -45,7 +56,7 @@ export function ItemHistoryPicker({ items, itemId, nLimit, view }: {
       <input
         style={{ width: "100%", fontSize: 17, fontWeight: 600,
           padding: "14px 14px 14px 44px", borderRadius: 12,
-          background: "var(--card, #fff)" }}
+          background: "var(--card, #fff)", color: "#000" }}
         value={q !== "" ? q : (selected?.name ?? "")}
         placeholder="🔍  Search item name / SKU…"
         onChange={e => { setQ(e.target.value); setOpen(true); setHi(0); }}
@@ -54,7 +65,7 @@ export function ItemHistoryPicker({ items, itemId, nLimit, view }: {
         onKeyDown={onKey} autoComplete="off" />
       {open && q.trim() !== "" && options.length > 0 && (
         <div style={{ position: "absolute", zIndex: 70, left: 0, right: 0,
-          top: "calc(100% + 4px)", background: "var(--card, #fff)",
+          top: "calc(100% + 4px)", background: "#fff",
           border: "1px solid var(--line)", borderRadius: 12, overflow: "hidden",
           boxShadow: "0 12px 34px rgba(0,0,0,.16)", maxHeight: 300, overflowY: "auto",
           overscrollBehavior: "contain" }}>
@@ -62,17 +73,25 @@ export function ItemHistoryPicker({ items, itemId, nLimit, view }: {
             <div key={i.id} data-idx={idx}
               style={{ display: "flex", gap: 10, alignItems: "center", padding: "11px 14px",
                 borderBottom: "1px solid var(--line)", cursor: "pointer",
-                background: idx === hi ? "var(--card2, #f2ecda)" : "transparent",
-                opacity: i.id === itemId ? .55 : 1 }}
+                background: idx === hi ? "var(--card2, #f2ecda)" : "#fff",
+                color: "#000" }}                                    /* bold black text */
               onMouseEnter={() => setHi(idx)}
               onMouseDown={e => e.preventDefault()}
               onClick={() => go(i.id)}>
-              <b style={{ fontSize: 14.5, whiteSpace: "nowrap" }}>{i.name}</b>
-              {i.sku && <span className="mut mono" style={{ fontSize: 11.5 }}>{i.sku}</span>}
+              <b style={{ fontSize: 14.5, fontWeight: 700, color: "#000",
+                whiteSpace: "nowrap" }}>{i.name}</b>
+              {i.sku && <span className="mono" style={{ fontSize: 11.5, color: "#333" }}>{i.sku}</span>}
               {i.id === itemId && <span className="chip grn" style={{ fontSize: 10, marginLeft: 4 }}>shown</span>}
-              <span className="mut" style={{ marginLeft: "auto", fontSize: 12, whiteSpace: "nowrap" }}>
+              <span style={{ marginLeft: "auto", fontSize: 12, color: "#333", whiteSpace: "nowrap" }}>
                 ₹{Math.round(i.cost || 0)}</span>
             </div>))}
+        </div>)}
+      {open && q.trim() !== "" && options.length === 0 && (
+        <div style={{ position: "absolute", zIndex: 70, left: 0, right: 0,
+          top: "calc(100% + 4px)", background: "#fff",
+          border: "1px solid var(--line)", borderRadius: 12, padding: "12px 14px",
+          color: "#000", fontSize: 13 }}>
+          No items match “{q}” — try fewer words or a SKU fragment.
         </div>)}
     </div>
   );
